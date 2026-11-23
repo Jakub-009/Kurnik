@@ -1,13 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {averageFlock, batchBaseMass, batchResult, cohortAge, cohortCount, dailyAverage, dailyHistory, flockCount, ingredientMass,
+import {averageFlock, batchBaseMass, cohortCounts, feedModel, hatchRate, incubation, batchResult, cohortAge, cohortCount, dailyAverage, dailyHistory, flockCount, ingredientMass,
   isAdditive, lastBatchMass, mixtureCost, purchaseNeed, recipeComposition, remainingMix, roundPurchase, savings, scaleBatch,
   scaleRecipe, stock, supplyForecast, validCohortHistory} from '../src/calc/index.js';
 import {decodeBackup, encodeBackup} from '../src/backup.js';
 import {record} from '../src/db.js';
 import {normalizeData} from '../src/migrate.js';
 import {derive, putBatch, removeBatch} from '../src/model.js';
-import {batchView, cohortView, feed, ingredientView, movementDetail, recipeView, start, warehouse} from '../src/views.js';
+import {batchView, cohortView, feed, flockView, ingredientView, movementDetail, recipeView, start, warehouse} from '../src/views.js';
 import {mixForm, movementForm} from '../src/forms.js';
 import * as fmt from '../ui/format.js';
 
@@ -56,7 +56,7 @@ test('T3 – zużycie i dni', () => {
 });
 
 test('T4 – gramy na ptaka z historycznej obsady', () => {
-  const cohort = record({date:'2025-04-22', count:30, category:'hens'});
+  const cohort = record({date:'2025-04-22', dateKind:'hatch', hens:30, roosters:0, rearing:null});
   const birds = averageFlock([cohort], [], finished.start, finished.end);
   assert.equal(fmt.number(batchResult(finished).daily / birds, 1), '123,5');
   const change = record({date:'2025-09-04', cohortId:cohort.id, count:20});
@@ -169,7 +169,7 @@ test('T16 – domyślna masa: ostatnia partia 75 kg → „Inna” z 75; bez par
 
 test('T17 – zmiana liczby: 30 szt., ubyło 1, przybyło 5 → 34 szt.', () => {
   const {data} = fixture();
-  const cohort = record({name:'Kury 2025', category:'hens', date:'2025-04-14', dateKind:'purchase', weeks:16, count:30, mark:'', notes:''});
+  const cohort = record({name:'Kury 2025', date:'2025-04-14', dateKind:'purchase', weeks:16, hens:30, roosters:0, rearing:null, mark:'', notes:''});
   data.cohorts.push(cohort);
   data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', date:'2026-10-01', count:1, notes:'padła', order:1}),
     record({cohortId:cohort.id, type:'add', date:'2026-11-01', count:5, notes:'dokupione', order:2}));
@@ -177,7 +177,7 @@ test('T17 – zmiana liczby: 30 szt., ubyło 1, przybyło 5 → 34 szt.', () => 
   const body = cohortView(ctxOf(data), cohort.id).body;
   assert.match(body, /padła[\s\S]*−1|−1[\s\S]*padła/);
   assert.match(body, /dokupione[\s\S]*\+5|\+5[\s\S]*dokupione/);
-  assert.match(body, />34 szt\.</);
+  assert.match(body, />34 ptaki</);
   assert.equal(validCohortHistory(cohort, [...data.cohortChanges, record({cohortId:cohort.id, type:'loss', date:today, count:35})]), false);
 });
 
@@ -275,12 +275,12 @@ test('kopia: zapis i odczyt bez zmian, uszkodzona kopia daje jeden prosty komuni
   const items = scaleBatch(composition, 50000).map(({position, share, amount, additive, ...item}) => additive ? {...item, additive} : item);
   putBatch(data, null, {recipeId:recipe.id, recipeName:recipe.name, date:today, start:today,
     end:null, remaining:null, mass:50000, massBasis:'base', items});
-  const cohort = record({name:'Kury', category:'hens', date:today, dateKind:'hatch', weeks:null, count:30, mark:'', notes:''});
+  const cohort = record({name:'Kury', date:today, dateKind:'hatch', weeks:null, hens:30, roosters:0, rearing:null, mark:'', notes:''});
   data.cohorts.push(cohort);
-  data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', date:today, count:1, notes:'padła'}));
+  data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', sex:'hens', date:today, count:1, notes:'padła'}));
   const restored = decodeBackup(encodeBackup(data, today));
   assert.deepEqual(restored, {...data, settings:[{...data.settings[0], lastExport:today}]});
-  assert.equal(JSON.parse(encodeBackup(data, today)).version, 4);
+  assert.equal(JSON.parse(encodeBackup(data, today)).version, 5);
   data.batches[0].mass += 1;
   assert.throws(() => decodeBackup(encodeBackup(data, today)), /To nie jest plik kopii Kurnika albo jest uszkodzony\./);
   assert.throws(() => decodeBackup('{nie json'), /To nie jest plik kopii Kurnika/);
@@ -297,38 +297,79 @@ test('kopia z wersji 1.5 od Codexa (dodatek w kg, savedOrder, rocznik bez uwag) 
   const cohort = record({name:'Kury', category:'hens', date:'2026-01-01', dateKind:'purchase', weeks:null, count:20, mark:''});
   data.cohorts.push(cohort);
   data.cohortChanges.push(record({cohortId:cohort.id, type:'add', date:'2026-02-01', count:2, notes:'', order:1}));
-  const restored = decodeBackup(encodeBackup(data, today));
+  const backup = JSON.parse(encodeBackup(data, today));
+  backup.version = 4;
+  const restored = decodeBackup(JSON.stringify(backup));
   assert.equal(restored.cohorts[0].notes, '');
   assert.equal(cohortCount(restored.cohorts[0], restored.cohortChanges, today), 22);
   assert.equal(restored.batches[0].items.filter(item => item.additive).length, 2);
   assert.equal(batchBaseMass(restored.batches[0]), 100000);
 });
 
-test('Start: trzy karty, zielone liczby, bez FAB i bez „Magazynu w skrócie”; pierwsze uruchomienie', () => {
+test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, stado; bez FAB', () => {
   const {data, ingredients, recipe} = fixture();
   let screen = start(ctxOf(data));
   assert.equal(screen.floating, undefined);
-  assert.equal((screen.body.match(/class="card home-card/g) ?? []).length, 3);
   assert.doesNotMatch(screen.body, /Magazyn w skrócie|Wpisz, ile masz</);
   assert.match(screen.body, /Wpisz stany/);
-  assert.match(screen.body, /Dodaj pierwszy rocznik/);
+  assert.match(screen.body, /Dodaj rocznik/);
   assert.match(screen.body, /Brak mieszanki w użyciu/);
   assert.doesNotMatch(screen.body, /0 ptaków/);
 
   const now = '2026-11-23';
-  data.batches.push(record({mass:100000, massBasis:'base', date:'2026-11-15', start:'2026-11-15', end:null, remaining:null,
-    recipeName:'Podstawowa', recipeId:recipe.id, items:[{ingredientId:ingredients[0].id, grams:100000}]}));
-  data.ingredientEvents.push(record({ingredientId:ingredients[0].id, type:'purchase', grams:100000, date:now}));
-  data.cohorts.push(record({name:'Kury', category:'hens', date:'2026-01-01', dateKind:'hatch', weeks:null, count:30, mark:'', notes:''}),
-    record({name:'Koguty', category:'roosters', date:'2026-01-01', dateKind:'hatch', weeks:null, count:4, mark:'', notes:''}));
+  data.batches.push(record({mass:50000, massBasis:'base', date:'2026-11-15', start:'2026-11-15', end:null, remaining:null,
+    recipeName:'Podstawowa', recipeId:recipe.id, items:[{ingredientId:ingredients[0].id, grams:50000}]}));
+  ingredients.forEach((row, i) => data.ingredientEvents.push(record({ingredientId:row.id, type:'purchase',
+    grams:i === 2 ? 5000 : 200000, date:now})));
+  data.cohorts.push(record({name:'Kury', date:'2026-01-01', dateKind:'hatch', weeks:null, hens:26, roosters:0, rearing:null, mark:'', notes:''}),
+    record({name:'Koguty', date:'2026-01-01', dateKind:'hatch', weeks:null, hens:0, roosters:4, rearing:null, mark:'', notes:''}));
   screen = start(ctxOf(data, now));
-  assert.match(screen.body, /<p class="display">≈ 70 kg · ≈ 19 dni<\/p>/);
-  assert.match(screen.body, /Podstawowa · 9\. dzień karmienia/);
-  assert.match(screen.body, /Najbliższy brak[\s\S]*≈ \d+ dni[\s\S]*Pszenica · skończy się ok\./);
-  assert.match(screen.body, /34 ptaki[\s\S]*30 kur, 4 koguty/);
+  // 30 ptaków × 120 g = 3,6 kg dziennie; 8,5 dnia karmienia → zostało 50 − 30,6 = 19,4 kg; 19,4 / 3,6 ≈ 5 dni.
+  assert.match(screen.body, /Następne mieszanie[\s\S]*za ≈ 5 dni/);
+  assert.match(screen.body, /zostało ok\. 19,4 kg/);
+  assert.match(screen.body, /Na następną partię \(50 kg\) brakuje: Śruta sojowa 6 kg/);
+  assert.match(screen.body, /Kończy się najszybciej[\s\S]*Śruta sojowa[\s\S]*dokup ok\./);
+  assert.equal((screen.body.match(/class="mini-row/g) ?? []).length, 3);
+  assert.match(screen.body, /30 ptaków[\s\S]*26 kur, 4 koguty[\s\S]*ok\. 120 g na ptaka dziennie, razem 3,6 kg/);
+  assert.match(screen.body, /Wartość z Ustawień/);
   assert.doesNotMatch(screen.body, /Zrób kopię/);
   data.settings[0].lastExport = '2026-09-01';
   assert.match(start(ctxOf(data, now)).body, /Zrób kopię/);
+});
+
+test('zużycie na ptaka: uczy się z partii, a ubytek w połowie partii zmienia prognozę od tego dnia', () => {
+  const {data, recipe} = fixture();
+  const cohort = record({name:'Kury', date:'2026-01-01', dateKind:'hatch', weeks:null, hens:30, roosters:0, rearing:null, mark:'', notes:''});
+  data.cohorts.push(cohort);
+  // Zakończona partia: 30 ptaków × 10 dni zjadło 33 kg → 110 g na ptaka.
+  data.batches.push(record({mass:33000, massBasis:'base', date:'2026-10-01', start:'2026-10-01', end:'2026-10-11', remaining:0,
+    recipeName:'P', recipeId:recipe.id, items:[]}));
+  const open = record({mass:50000, massBasis:'base', date:'2026-11-15', start:'2026-11-15', end:null, remaining:null,
+    recipeName:'P', recipeId:recipe.id, items:[]});
+  data.batches.push(open);
+  let derived = derive(data, '2026-11-23');
+  near(derived.model.perBird, 110);
+  near(derived.daily, 3300);
+  near(derived.active.remaining, 50000 - 8.5 * 3300);
+  // 20.11 ubyło 10 kur: od tego dnia 20 × 110 g.
+  data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', date:'2026-11-20', count:10, notes:'sprzedana'}));
+  derived = derive(data, '2026-11-23');
+  near(derived.daily, 2200);
+  near(derived.active.remaining, 50000 - 5 * 3300 - 3.5 * 2200);
+  assert.equal(feed(ctxOf(data, '2026-11-23')).body.includes('Liczone: 20 × 110 g = 2,2 kg dziennie'), true);
+});
+
+test('bez stada prognoza liczy kg dziennie, dziś jako pół dnia; rocznik z późniejszą datą nie zeruje przeszłości', () => {
+  const {data, recipe} = fixture();
+  data.batches.push(record({mass:50000, massBasis:'base', date:'2026-11-15', start:'2026-11-15', end:null, remaining:null,
+    recipeName:'P', recipeId:recipe.id, items:[]}));
+  let derived = derive(data, '2026-11-23');
+  assert.equal(derived.model.perBird, null);
+  near(derived.active.remaining, 50000 - 8.5 * 3700);
+  assert.match(feed(ctxOf(data, '2026-11-23')).body, /Zostało ok\. 18,6 kg[\s\S]*9\. dzień karmienia[\s\S]*Liczone: 3,7 kg dziennie/);
+  data.cohorts.push(record({name:'Kury', date:'2026-11-23', dateKind:'purchase', weeks:null, hens:25, roosters:0, rearing:null, mark:'', notes:''}));
+  derived = derive(data, '2026-11-23');
+  near(derived.active.remaining, 50000 - 8.5 * 25 * 120);
 });
 
 test('Magazyn: karta „Wpisz stany” przy pierwszym uruchomieniu, potem „Wpisz, ile masz” przy brakach', () => {
@@ -401,4 +442,56 @@ test('normalizacja jest idempotentna i nie rusza liczb', () => {
   const once = normalizeData(structuredClone(data));
   assert.deepEqual(normalizeData(structuredClone(once)), once);
   assert.equal(isAdditive(once.ingredients[6]), true);
+});
+
+test('rocznik z kurami i kogutami razem: 8 kur i 2 koguty, ubył 1 kogut', () => {
+  const {data} = fixture();
+  const cohort = record({name:'Zakup 2026', dateKind:'purchase', date:'2026-05-01', weeks:16, hens:8, roosters:2, mark:'', notes:'', rearing:null});
+  data.cohorts.push(cohort);
+  data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', sex:'roosters', date:'2026-10-01', count:1, notes:'ubój', order:1}));
+  assert.deepEqual(cohortCounts(cohort, data.cohortChanges, today), {hens:8, roosters:1, young:0});
+  assert.equal(flockCount(data.cohorts, data.cohortChanges, today).total, 9);
+  assert.match(flockView(ctxOf(data)).body, /9 ptaków[\s\S]*8 kur, 1 kogut/);
+  assert.equal(validCohortHistory(cohort, [...data.cohortChanges,
+    record({cohortId:cohort.id, type:'loss', sex:'roosters', date:today, count:2})]), false);
+});
+
+test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do stada', () => {
+  const {data, recipe} = fixture();
+  const adults = record({name:'Kury', dateKind:'hatch', date:'2025-01-01', weeks:null, hens:20, roosters:0, mark:'', notes:'', rearing:null});
+  const hatch = record({name:'Klucie 2026', dateKind:'hatch', date:null, weeks:null, hens:0, roosters:0, mark:'', notes:'',
+    rearing:{method:'incubator', setDate:'2026-04-01', eggs:20, infertile:3, dead:2, hatched:null, chicks:null, feedFrom:null}});
+  data.cohorts.push(adults, hatch);
+  const inc = incubation(hatch, '2026-04-18');
+  assert.equal(inc.day, 18);
+  assert.equal(inc.due, '2026-04-22');
+  assert.equal(inc.eggsLeft, 15);
+  assert.equal(inc.early, true);
+  assert.equal(incubation(hatch, '2026-04-10').left, 12);
+  assert.match(start(ctxOf(data, '2026-04-10')).body, /Klucie<\/h2>[\s\S]*za ≈ 12 dni[\s\S]*Klucie 2026 · 21\. dzień/);
+  assert.match(flockView(ctxOf(data, '2026-04-10')).body, /Klucie i pisklęta[\s\S]*10\. dzień z 21 · 15 jaj/);
+  // Wyklucie 21.04: 12 piskląt. Pisklęta na paszy kupnej nie liczą się do mieszanki.
+  Object.assign(hatch, {date:'2026-04-21', rearing:{...hatch.rearing, hatched:12, chicks:12}});
+  assert.deepEqual(hatchRate(hatch.rearing), {ofSet:.6, ofFertile:12 / 17});
+  let model = feedModel({batches:data.batches, cohorts:data.cohorts, changes:data.cohortChanges, settings:data.settings[0], today:'2026-05-10'});
+  assert.equal(model.birds, 20);
+  data.cohortChanges.push(record({cohortId:hatch.id, type:'loss', sex:'young', date:'2026-05-01', count:2, notes:'padła', order:1}));
+  // Od 15.06 jedzą mieszankę: liczą się do zużycia.
+  hatch.rearing.feedFrom = '2026-06-15';
+  model = feedModel({batches:data.batches, cohorts:data.cohorts, changes:data.cohortChanges, settings:data.settings[0], today:'2026-06-20'});
+  assert.equal(model.birds, 30);
+  assert.match(cohortView(ctxOf(data, '2026-06-20'), hatch.id).body, /10 szt\.[\s\S]*8 tyg\.[\s\S]*Twoja mieszanka od 15\.06\.2026/);
+  // Przeniesienie 20.08: 6 kur i 4 koguty.
+  Object.assign(hatch, {joined:'2026-08-20', hens:6, roosters:4});
+  assert.equal(validCohortHistory(hatch, data.cohortChanges), true);
+  assert.deepEqual(cohortCounts(hatch, data.cohortChanges, '2026-08-19'), {hens:0, roosters:0, young:10});
+  assert.deepEqual(cohortCounts(hatch, data.cohortChanges, '2026-08-20'), {hens:6, roosters:4, young:0});
+  assert.equal(flockCount(data.cohorts, data.cohortChanges, '2026-08-25').total, 30);
+  assert.equal(derive(data, '2026-08-25').rearing.length, 0);
+  const body = cohortView(ctxOf(data, '2026-08-25'), hatch.id).body;
+  assert.match(body, /10 ptaków[\s\S]*6 kur, 4 koguty[\s\S]*Z klucia[\s\S]*20 jaj, wykluło się 12/);
+  const restored = decodeBackup(encodeBackup(data, today));
+  assert.deepEqual(restored.cohorts, data.cohorts);
+  assert.equal(JSON.parse(encodeBackup(data, today)).version, 5);
+  void recipe;
 });

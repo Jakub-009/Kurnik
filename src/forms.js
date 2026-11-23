@@ -1,4 +1,4 @@
-import {addDays, batchResult, cohortEvents, flockEventKind, ingredientMass, isAdditive, lastBatchMass, recipeBaseItems,
+import {addDays, batchResult, cohortCounts, cohortEvents, cohortStage, defaultPerBird, flockEventKind, ingredientMass, isAdditive, lastBatchMass, recipeBaseItems,
   recipeComposition, scaleBatch, stock, validCohortHistory} from './calc/index.js';
 import {live, record} from './db.js';
 import {find, isFinished, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
@@ -692,12 +692,17 @@ export function finishForm(ctx, id, origin) {
     }};
 }
 
+const birdsField = (name, label, value) => numberField(name, label, asInput(value), t.pcs, 'numeric');
+const readBirds = (name, min = 0) => readNumber(value(name), name, {digits:0, max:maxBirds, min});
+const year = date => date.slice(0, 4);
+
 export function cohortForm(ctx, id) {
   const cohort = get(ctx, 'cohorts', id);
-  if (id && !cohort) return missing('flock');
+  if (id && (!cohort || cohortStage(cohort) !== 'flock')) return missing('flock');
   const parent = cohort ? 'cohort/' + id : 'flock';
   const history = cohort ? cohortEvents(cohort, ctx.data.cohortChanges) : [];
   const lastAllowedDate = history[0]?.date ?? ctx.today;
+  const fromRearing = Boolean(cohort?.rearing);
   let dateKind = cohort?.dateKind === 'hatch' ? 'hatch' : 'purchase';
 
   function updateFields() {
@@ -707,11 +712,10 @@ export function cohortForm(ctx, id) {
 
   return {title:cohort ? t.editCohort : t.addCohort, parent, form:true,
     body:form(`${field('name', t.nameLabel, cohort?.name, {length:80})}
-      ${choice('category', t.henOrRooster, [['hens', t.hens], ['roosters', t.roosters]], cohort?.category ?? 'hens')}
-      ${numberField('count', t.birdCount, asInput(cohort?.count), t.pcs, 'numeric')}
-      ${choice('date-kind', t.boughtOrHatched, [['purchase', t.bought], ['hatch', t.hatched]], dateKind)}
+      <div class="form-grid">${birdsField('hens', t.hens, cohort?.hens)}${birdsField('roosters', t.roosters, cohort?.roosters)}</div>
+      ${fromRearing ? '' : `${choice('date-kind', t.boughtOrHatched, [['purchase', t.bought], ['hatch', t.hatched]], dateKind)}
       ${dateField('date', dateKind === 'hatch' ? t.hatchDate : t.purchaseDate, cohort?.date ?? ctx.today, '1900-01-01', lastAllowedDate)}
-      <div id="weeks-wrap"${dateKind === 'purchase' ? '' : ' hidden'}>${field('weeks', t.ageAtPurchase, asInput(cohort?.weeks), {mode:'numeric'})}</div>
+      <div id="weeks-wrap"${dateKind === 'purchase' ? '' : ' hidden'}>${field('weeks', t.ageAtPurchase, asInput(cohort?.weeks), {mode:'numeric'})}</div>`}
       ${field('mark', t.markOptional, cohort?.mark, {length:80})}`, t.save, Boolean(cohort)),
     change(target) {
       if (target.name === 'date-kind') {
@@ -721,23 +725,150 @@ export function cohortForm(ctx, id) {
     },
     submit() {
       const name = readName(value('name'));
-      const category = chosen('category');
-      const date = readDate(value('date'), 'date', '1900-01-01', lastAllowedDate);
-      const weeks = dateKind === 'purchase' ? readNumber(value('weeks'), 'weeks', {optional:true, digits:0, max:5200}) : null;
-      const count = readNumber(value('count'), 'count', {digits:0, max:maxBirds, min:cohort ? 0 : 1});
-      const fields = {name, category, dateKind, date, weeks, count, mark:text('mark'), notes:cohort?.notes ?? ''};
-      if (cohort && !validCohortHistory({...cohort, ...fields}, history)) throw new FieldError('count', t.historyConflict);
-      return ctx.commit(data => {
-        const row = put(data, 'cohorts', cohort, fields);
-        for (const key of ['status', 'origin', 'expectedStart', 'layingSince']) delete row[key];
-      }, parent);
+      const hens = readBirds('hens');
+      const roosters = readBirds('roosters');
+      if (!cohort && hens + roosters < 1) throw new FieldError('hens', t.atLeastOneBird);
+      const fields = {name, hens, roosters, mark:text('mark'), notes:cohort?.notes ?? ''};
+      if (!fromRearing) {
+        fields.dateKind = dateKind;
+        fields.date = readDate(value('date'), 'date', '1900-01-01', lastAllowedDate);
+        fields.weeks = dateKind === 'purchase' ? readNumber(value('weeks'), 'weeks', {optional:true, digits:0, max:5200}) : null;
+        fields.rearing = null;
+      }
+      if (cohort && !validCohortHistory({...cohort, ...fields}, history)) throw new FieldError('hens', t.historyConflict);
+      return ctx.commit(data => put(data, 'cohorts', cohort, fields), parent);
     },
     action(action) {
       if (action !== 'delete') return;
-      return ctx.commit(data => {
-        remove(data, 'cohorts', id);
-        for (const change of live(data.cohortChanges)) if (change.cohortId === id) change.deleted = true;
-      }, 'flock', t.deleted);
+      return removeCohort(ctx, id);
+    }};
+}
+
+function removeCohort(ctx, id) {
+  return ctx.commit(data => {
+    remove(data, 'cohorts', id);
+    for (const change of live(data.cohortChanges)) if (change.cohortId === id) change.deleted = true;
+  }, 'flock', t.deleted);
+}
+
+// Klucie (inkubator albo kwoka) albo kupione pisklęta. Ten sam formularz służy do poprawiania liczb jaj.
+export function rearingForm(ctx, id) {
+  const cohort = get(ctx, 'cohorts', id);
+  if (id && (!cohort?.rearing || cohortStage(cohort) === 'flock')) return missing('flock');
+  const parent = cohort ? 'cohort/' + id : 'flock';
+  const old = cohort?.rearing;
+  let method = old?.method ?? 'incubator';
+  const hatched = old && old.method !== 'bought' && old.chicks != null;
+  const history = cohort ? cohortEvents(cohort, ctx.data.cohortChanges) : [];
+
+  function show() {
+    document.getElementById('egg-fields').hidden = method === 'bought';
+    document.getElementById('bought-fields').hidden = method !== 'bought';
+  }
+
+  return {title:cohort ? t.editRearing : t.newRearing, parent, form:true,
+    body:form(`${cohort ? '<p class="muted">' + html(t.methods[method]) + '</p>' : choice('method', t.rearingSource, Object.entries(t.methods), method)}
+      ${field('name', t.nameLabel, cohort?.name ?? t.defaultRearingName(method, year(ctx.today)), {length:80})}
+      <div id="egg-fields" class="stack tight"${method === 'bought' ? ' hidden' : ''}>
+        ${dateField('set-date', t.setDate, old?.setDate ?? ctx.today, '1900-01-01', ctx.today)}
+        ${birdsField('eggs', t.eggs, old?.eggs)}
+        <div class="form-grid">${birdsField('infertile', t.infertile, old?.infertile)}${birdsField('dead', t.deadInShell, old?.dead)}</div>
+        ${hatched ? `<div class="form-grid">${dateField('hatch-date', t.hatchedDate, cohort.date, old.setDate, ctx.today)}
+          ${birdsField('hatched', t.hatchedCount, old.hatched)}</div>` : ''}</div>
+      <div id="bought-fields" class="stack tight"${method === 'bought' ? '' : ' hidden'}>
+        ${dateField('date', t.purchaseDate, old?.method === 'bought' ? cohort.date : ctx.today, '1900-01-01', ctx.today)}
+        ${field('weeks', t.ageAtPurchase, asInput(cohort?.weeks), {mode:'numeric'})}
+        ${birdsField('chicks', t.chicksCount, old?.method === 'bought' ? old.chicks : null)}</div>
+      ${old?.feedFrom ? dateField('feed-from', t.switchFeedDate, old.feedFrom, cohort.date, ctx.today) : ''}`, t.save, Boolean(cohort)),
+    change(target) {
+      if (target.name === 'method') {
+        const nameInput = document.getElementById('name');
+        if (!cohort && nameInput.value === t.defaultRearingName(method, year(ctx.today))) {
+          nameInput.value = t.defaultRearingName(target.value, year(ctx.today));
+        }
+        method = target.value;
+        show();
+      }
+    },
+    submit() {
+      const name = readName(value('name'));
+      const rearing = {method, setDate:null, eggs:null, infertile:null, dead:null, hatched:null, chicks:null, feedFrom:null};
+      const fields = {name, rearing, hens:cohort?.hens ?? 0, roosters:cohort?.roosters ?? 0, mark:cohort?.mark ?? '', notes:cohort?.notes ?? ''};
+      if (method === 'bought') {
+        Object.assign(fields, {dateKind:'purchase', date:readDate(value('date'), 'date', '1900-01-01', history[0]?.date ?? ctx.today),
+          weeks:readNumber(value('weeks'), 'weeks', {optional:true, digits:0, max:5200})});
+        rearing.chicks = readBirds('chicks', 1);
+      } else {
+        rearing.setDate = readDate(value('set-date'), 'set-date', '1900-01-01', ctx.today);
+        rearing.eggs = readBirds('eggs', 1);
+        rearing.infertile = readNumber(value('infertile'), 'infertile', {optional:true, digits:0, max:rearing.eggs});
+        rearing.dead = readNumber(value('dead'), 'dead', {optional:true, digits:0, max:rearing.eggs});
+        if ((rearing.infertile ?? 0) + (rearing.dead ?? 0) > rearing.eggs) throw new FieldError('dead', t.eggsTooFew);
+        Object.assign(fields, {dateKind:'hatch', date:null, weeks:null});
+        if (hatched) {
+          fields.date = readDate(value('hatch-date'), 'hatch-date', rearing.setDate, history[0]?.date ?? ctx.today);
+          rearing.hatched = readBirds('hatched');
+          if (rearing.hatched > rearing.eggs) throw new FieldError('hatched', t.hatchedTooMany);
+          rearing.chicks = rearing.hatched;
+        }
+      }
+      if (old?.feedFrom) rearing.feedFrom = readDate(value('feed-from'), 'feed-from', fields.date ?? '1900-01-01', ctx.today);
+      if (cohort && !validCohortHistory({...cohort, ...fields}, history)) throw new FieldError('', t.historyConflict);
+      return ctx.commit(data => put(data, 'cohorts', cohort, fields), cohort ? parent : 'flock');
+    },
+    action(action) {
+      if (action === 'delete') return removeCohort(ctx, id);
+    }};
+}
+
+export function hatchForm(ctx, id) {
+  const cohort = get(ctx, 'cohorts', id);
+  if (!cohort || cohortStage(cohort) !== 'incubation') return missing('flock');
+  const parent = 'cohort/' + id;
+  const rearing = cohort.rearing;
+  const left = rearing.eggs - (rearing.infertile ?? 0) - (rearing.dead ?? 0);
+  return {title:t.enterHatched, subtitle:cohort.name, parent, form:true,
+    body:form(`${dateField('date', t.hatchedDate, ctx.today, rearing.setDate, ctx.today)}
+      ${birdsField('hatched', t.hatchedCount, left)}`),
+    submit() {
+      const date = readDate(value('date'), 'date', rearing.setDate, ctx.today);
+      const hatched = readBirds('hatched');
+      if (hatched > rearing.eggs) throw new FieldError('hatched', t.hatchedTooMany);
+      return ctx.commit(data => put(data, 'cohorts', cohort, {date, dateKind:'hatch', weeks:null,
+        rearing:{...rearing, hatched, chicks:hatched}}), parent);
+    }};
+}
+
+export function feedSwitchForm(ctx, id) {
+  const cohort = get(ctx, 'cohorts', id);
+  if (!cohort || cohortStage(cohort) !== 'chicks') return missing('flock');
+  const parent = 'cohort/' + id;
+  return {title:t.switchFeed, subtitle:cohort.name, parent, form:true,
+    body:form(dateField('date', t.switchFeedDate, ctx.today, cohort.date, ctx.today)),
+    submit() {
+      const feedFrom = readDate(value('date'), 'date', cohort.date, ctx.today);
+      return ctx.commit(data => put(data, 'cohorts', cohort, {rearing:{...cohort.rearing, feedFrom}}), parent);
+    }};
+}
+
+export function transferForm(ctx, id) {
+  const cohort = get(ctx, 'cohorts', id);
+  if (!cohort || cohortStage(cohort) !== 'chicks') return missing('flock');
+  const parent = 'cohort/' + id;
+  const history = cohortEvents(cohort, ctx.data.cohortChanges);
+  const earliest = history.at(-1)?.date > cohort.date ? history.at(-1).date : cohort.date;
+  const now = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
+  return {title:t.moveToFlock, subtitle:cohort.name, parent, form:true,
+    body:form(`<p class="muted">${html(t.moveHelp(fmt.chicks(now)))}</p>
+      ${dateField('date', t.moveDate, ctx.today, earliest, ctx.today)}
+      <div class="form-grid">${birdsField('hens', t.hens, null)}${birdsField('roosters', t.roosters, null)}</div>`),
+    submit() {
+      const joined = readDate(value('date'), 'date', earliest, ctx.today);
+      const hens = readBirds('hens');
+      const roosters = readBirds('roosters');
+      const young = cohortCounts(cohort, ctx.data.cohortChanges, joined).young;
+      if (hens + roosters !== young) throw new FieldError('roosters', t.moveCountMismatch(fmt.number(young)));
+      return ctx.commit(data => put(data, 'cohorts', cohort, {joined, hens, roosters}), parent);
     }};
 }
 
@@ -746,21 +877,26 @@ export function changeForm(ctx, id, changeId) {
   // Stare adresy miały rodzaj zdarzenia przed identyfikatorem.
   if (['add', 'loss', 'correction', 'status'].includes(changeId)) changeId = arguments[3];
   const old = changeId ? get(ctx, 'cohortChanges', changeId) : null;
-  if (!cohort || (changeId && (!old || old.cohortId !== id || !['add', 'loss'].includes(flockEventKind(old))))) return missing('flock');
+  if (!cohort || cohortStage(cohort) === 'incubation' ||
+    (changeId && (!old || old.cohortId !== id || !['add', 'loss'].includes(flockEventKind(old))))) return missing('flock');
   const parent = 'cohort/' + id;
+  const young = old ? old.sex === 'young' : cohortStage(cohort) === 'chicks';
   const history = cohortEvents(cohort, ctx.data.cohortChanges);
   const others = history.filter(event => event.id !== changeId);
+  const minDate = young ? cohort.date : cohort.joined ?? cohort.date;
   return {title:t.changeCount, subtitle:cohort.name, parent, form:true,
     body:form(`${choice('direction', t.lessOrMore, [['loss', t.less], ['add', t.more]], old?.type ?? 'loss')}
+      ${young ? '' : choice('sex', t.whichBirds, [['hens', t.hens], ['roosters', t.roosters]], old?.sex ?? 'hens')}
       ${numberField('count', t.howMany, asInput(old?.count), t.pcs, 'numeric')}
-      ${dateInput(ctx, 'date', t.date, old?.date, cohort.date)}
+      ${dateInput(ctx, 'date', t.date, old?.date, minDate)}
       ${textarea('notes', t.note, old?.notes)}
       <div class="actions hint-chips">${t.hints.map((hint, index) => button(hint, 'hint:' + index, 'chip')).join('')}</div>`, t.save, Boolean(old)),
     submit() {
       const type = chosen('direction');
-      const date = readDate(value('date'), 'date', cohort.date, ctx.today);
+      const sex = young ? 'young' : chosen('sex');
+      const date = readDate(value('date'), 'date', minDate, young && cohort.joined ? addDays(cohort.joined, -1) : ctx.today);
       const count = readNumber(value('count'), 'count', {digits:0, max:maxBirds, min:1});
-      const fields = {cohortId:id, type, date, count, notes:text('notes')};
+      const fields = {cohortId:id, type, sex, date, count, notes:text('notes')};
       const order = history.reduce((highest, event) => Math.max(highest, event.order ?? 0), 0);
       const entry = old ? {...old, ...fields} : record({...fields, order:order + 1});
       if (!validCohortHistory(cohort, [...others, entry])) throw new FieldError('count', t.historyConflict);
@@ -781,10 +917,13 @@ export function settingsForm(ctx, origin) {
   const settings = ctx.derived.settings;
   const parent = ['start', 'feed', 'stock', 'flock'].includes(origin) ? origin : 'start';
   const canShare = Boolean(navigator.canShare && navigator.share);
+  const hasFlock = ctx.derived.cohorts.length > 0;
   const fileInput = '<input id="backup-file" hidden type="file" accept=".json,application/json">';
   return {title:t.settings, parent, form:true,
     body:form(`${field('threshold', t.threshold, asInput(settings.threshold), {mode:'numeric'})}
-      ${field('default-daily', t.defaultDaily, asInput(settings.defaultDaily / 1000), {mode:'decimal'})}
+      ${hasFlock ? field('default-per-bird', t.defaultPerBird, asInput(settings.defaultPerBird ?? defaultPerBird), {mode:'numeric'})
+        : field('default-daily', t.defaultDaily, asInput(settings.defaultDaily / 1000), {mode:'decimal'})}
+      <p class="muted">${t.defaultDailyHelp}</p>
       ${priceInput('ready', t.readyPrice, settings.readyPrice === null ? null : settings.readyPrice / 100)}
       <section class="card stack tight"><h2>${t.backup}</h2>
         <p class="muted">${settings.lastExport ? t.lastBackup(fmt.fullDate(settings.lastExport)) : t.noBackup}</p>
@@ -795,10 +934,12 @@ export function settingsForm(ctx, origin) {
       <p class="muted">${t.appName} · ${t.version} ${ctx.version}</p>`),
     submit() {
       const threshold = readNumber(value('threshold'), 'threshold', {min:1, max:3650, digits:0});
-      const defaultDaily = Math.round(readNumber(value('default-daily'), 'default-daily', amountOptions) * 1000);
+      const usage = hasFlock
+        ? {defaultPerBird:readNumber(value('default-per-bird'), 'default-per-bird', {min:1, max:1000, digits:0})}
+        : {defaultDaily:Math.round(readNumber(value('default-daily'), 'default-daily', amountOptions) * 1000)};
       const entered = readNumber(value('ready'), 'ready', {optional:true, min:.01, max:100000000, digits:2});
       const readyPrice = entered === null ? null : Math.round(entered * 100);
-      return ctx.commit(data => Object.assign(data.settings[0], {threshold, defaultDaily, readyPrice}), parent);
+      return ctx.commit(data => Object.assign(data.settings[0], {threshold, readyPrice, ...usage}), parent);
     },
     change(target) {
       if (target.id === 'backup-file' && target.files[0]) return ctx.importBackup(target.files[0]);

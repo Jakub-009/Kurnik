@@ -8,16 +8,27 @@ export function normalizeData(data) {
     if (ingredient.kind === undefined) ingredient.kind = isAdditive(ingredient) ? 'additive' : 'base';
     delete ingredient.oil;
   }
-  for (const change of data.cohortChanges) {
-    if (change.notes == null) change.notes = '';
-    if (change.notes) continue;
-    if (change.type === 'loss' && t.oldLossReasons[change.reason]) change.notes = t.oldLossReasons[change.reason];
-    if (change.type === 'add' && t.oldAddOrigins[change.origin]) change.notes = t.oldAddOrigins[change.origin];
-  }
+  // Stare roczniki miały jedną kategorię i jedną liczbę. Teraz kury i koguty są osobno w jednym roczniku.
+  const legacySex = new Map();
   for (const cohort of data.cohorts) {
+    if (cohort.hens === undefined) {
+      const roosters = cohort.category === 'roosters';
+      cohort.hens = roosters ? 0 : cohort.count ?? 0;
+      cohort.roosters = roosters ? cohort.count ?? 0 : 0;
+      legacySex.set(cohort.id, roosters ? 'roosters' : 'hens');
+    }
+    for (const key of ['category', 'count', 'status', 'origin', 'expectedStart', 'layingSince']) delete cohort[key];
     if (cohort.notes == null) cohort.notes = '';
     if (cohort.mark == null) cohort.mark = '';
     if (cohort.weeks === undefined) cohort.weeks = null;
+    if (cohort.rearing === undefined) cohort.rearing = null;
+  }
+  for (const change of data.cohortChanges) {
+    if (change.notes == null) change.notes = '';
+    if (change.sex === undefined) change.sex = legacySex.get(change.cohortId) ?? 'hens';
+    if (change.notes) continue;
+    if (change.type === 'loss' && t.oldLossReasons[change.reason]) change.notes = t.oldLossReasons[change.reason];
+    if (change.type === 'add' && t.oldAddOrigins[change.origin]) change.notes = t.oldAddOrigins[change.origin];
   }
   return data;
 }

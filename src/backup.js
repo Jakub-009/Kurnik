@@ -5,8 +5,8 @@ import {validDate} from '../ui/components.js';
 import {t} from '../ui/texts.js';
 
 const format = 'kurnik-backup';
-// Wersja 4 to format z dodatkami (także z 1.5 od Codexa). Kopie 1–4 są wczytywane.
-const version = 4;
+// Wersja 5: rocznik z kurami i kogutami oraz klucie. Kopie 1–4 (do wersji 1.5) są wczytywane i ujednolicane.
+const version = 5;
 const text = (value, max = 1000) => typeof value === 'string' && value.length <= max;
 const name = value => text(value,80) && value.trim().length > 0;
 const int = (value,min = 0,max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= min && value <= max;
@@ -40,7 +40,7 @@ export function decodeBackup(raw) {
 }
 
 function decodeData(source) {
-  if (source?.format !== format || ![1,2,3,4].includes(source.version) || !source.data || !date(source.exportedAt)) {
+  if (source?.format !== format || ![1,2,3,4,5].includes(source.version) || !source.data || !date(source.exportedAt)) {
     throw new Error(t.badBackup);
   }
   const data = Object.fromEntries(stores.map(key => [key,source.data[key]]));
@@ -112,30 +112,46 @@ function decodeData(source) {
     requireThat(rows.length === batch.items.length && rows.every(row => row.date === batch.date) &&
       batch.items.every(item => rows.some(row => row.ingredientId === item.ingredientId && row.grams === -item.grams)));
   }
+  const legacy = source.version < 5;
   for (const cohort of data.cohorts) {
-    requireThat(name(cohort.name) && ['hens','roosters'].includes(cohort.category) && date(cohort.date) &&
+    requireThat(name(cohort.name) && text(cohort.mark ?? '',80) && text(cohort.notes ?? '') &&
       ['hatch','purchase','initial'].includes(cohort.dateKind) && (cohort.weeks == null ||
-        (cohort.dateKind === 'purchase' && int(cohort.weeks,0,5200))) &&
-      int(cohort.count,0,1000000) && text(cohort.mark ?? '',80) && text(cohort.notes ?? ''));
-    requireThat(cohort.origin === undefined || cohort.origin === 'initial' ||
-      (cohort.origin === 'purchase' && cohort.dateKind === 'purchase') ||
-      (cohort.origin === 'rearing' && cohort.dateKind === 'hatch'));
-    // Statusy z wersji 1.4 są ignorowane.
+        (cohort.dateKind === 'purchase' && int(cohort.weeks,0,5200))));
+    if (legacy) {
+      // Wersje do 1.5: jedna kategoria i jedna liczba; statusy są ignorowane.
+      requireThat(['hens','roosters'].includes(cohort.category) && date(cohort.date) && int(cohort.count,0,1000000));
+      continue;
+    }
+    const rearing = cohort.rearing;
+    requireThat(int(cohort.hens,0,1000000) && int(cohort.roosters,0,1000000) &&
+      (cohort.date === null ? rearing && rearing.chicks == null : date(cohort.date)) &&
+      (cohort.joined === undefined || cohort.joined === null || (rearing && date(cohort.joined) && cohort.joined >= cohort.date)));
+    if (rearing !== null) {
+      requireThat(rearing && ['incubator','hen','bought'].includes(rearing.method) &&
+        (rearing.method === 'bought' ? rearing.setDate == null && int(rearing.chicks,0,1000000) :
+          date(rearing.setDate) && int(rearing.eggs,1,100000) && [rearing.infertile, rearing.dead, rearing.hatched]
+            .every(value => value == null || int(value,0,rearing.eggs))) &&
+        (rearing.chicks == null || int(rearing.chicks,0,1000000)) && (rearing.feedFrom == null || date(rearing.feedFrom)));
+    }
   }
   for (const change of data.cohortChanges) {
     const cohort = cohorts.get(change.cohortId);
-    requireThat(cohort && date(change.date) && (change.deleted || (!cohort.deleted && change.date >= cohort.date)) && text(change.notes ?? ''));
+    requireThat(cohort && date(change.date) && (change.deleted || (!cohort.deleted && (!cohort.date || change.date >= cohort.date))) &&
+      text(change.notes ?? ''));
     requireThat(change.order === undefined || int(change.order,1));
+    requireThat(change.sex === undefined || ['hens','roosters','young'].includes(change.sex));
     const kind = flockEventKind(change);
     if (kind === 'status') continue;
     if (kind === 'add' || kind === 'loss') requireThat(int(change.count,1,1000000));
     else requireThat(kind === 'correction' && int(change.count,0,1000000));
   }
+  normalizeData(data);
   requireThat(live(data.cohorts).every(cohort => validCohortHistory(cohort,data.cohortChanges)));
   const settings = data.settings[0];
   requireThat(data.settings.length === 1 && !settings.deleted && int(settings.revision) &&
     int(settings.threshold,1,3650) && int(settings.defaultDaily,1,10000000000) &&
-    (settings.readyPrice === null || int(settings.readyPrice,1,10000000000)) && optionalDate(settings.lastExport));
+    (settings.readyPrice === null || int(settings.readyPrice,1,10000000000)) && optionalDate(settings.lastExport) &&
+    (settings.defaultPerBird === undefined || int(settings.defaultPerBird,1,1000)));
   refreshPrices(data);
   return normalizeData(data);
 }

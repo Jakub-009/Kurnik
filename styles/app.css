@@ -105,3 +105,11 @@ a.home-card:active { background: var(--md-sys-color-surface-container); }
 .segmented input:focus-visible + span { outline: 2px solid var(--md-sys-color-primary); outline-offset: -4px; border-radius: var(--md-sys-shape-corner-full); }
 .checklist-row .tag { margin: 0 0 0 4px; vertical-align: middle; }
 .hint-chips { margin-top: -4px; }
+.mini-list { display: grid; }
+.mini-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding-block: 6px; color: inherit; text-decoration: none; }
+.mini-row + .mini-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
+.mini-row .grow > span, .mini-row .grow > small { display: block; }
+.mini-row strong { color: var(--md-sys-color-primary); font-weight: 500; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.mini-row--low strong, .mini-row--low small { color: var(--md-sys-color-tertiary); }
+.mini-row .icon { width: 18px; height: 18px; flex-basis: 18px; }
+.current-until { font-weight: 500; }

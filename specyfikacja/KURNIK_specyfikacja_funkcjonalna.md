@@ -1,6 +1,6 @@
 # KURNIK — specyfikacja funkcjonalna
 
-Wersja: 5.0 (stan aplikacji 1.5.0, tylko dla właściciela) · 23.11.2026
+Wersja: 6.0 (stan aplikacji 1.6.0, tylko dla właściciela) · 23.11.2026
 Dokument towarzyszący: `KURNIK_specyfikacja_UI_UX.md` (wersja 4.0)
 
 ---
@@ -97,24 +97,32 @@ Partia ma: datę mieszania, początek karmienia (domyślnie dzień mieszania), o
 - **Inne pobranie:** np. 5 kg pszenicy wzięte na inny cel.
 - **Prognoza zapasu** (wzór 8) dla każdego składnika i dodatku z aktualnej receptury, z orientacyjną datą wyczerpania. Poniżej progu (domyślnie 30 dni) oznaczenie „Kończy się”.
 - **Ile dokupić** (wzór 11) na 2 i 3 miesiące, na ekranie składnika.
-- **Ile mieszanki zostało** (prognoza) = masa partii w użyciu − średnie zużycie × dni od początku karmienia. Gdy spadnie do zera: „Mieszanka powinna się już skończyć. Sprawdź i zakończ partię.”
+- **Ile mieszanki zostało** (prognoza) = masa partii w użyciu − zużycie od początku karmienia (wzór 13). Gdy spadnie do zera: „Mieszanka powinna się już skończyć. Sprawdź i zakończ partię.”
 
-Średnie zużycie dzienne bierze się z 3 ostatnich zakończonych partii; bez nich z ustawień (domyślnie 3,7 kg).
+**Zużycie liczone na ptaka** (wzór 13): gramy na ptaka dziennie z 3 ostatnich zakończonych partii, mnożone przez liczbę ptaków w danym dniu. Ubytek albo przybycie ptaków w połowie partii zmienia prognozę od dnia zmiany. Bez zakończonej partii: wartość z Ustawień (domyślnie 120 g). Gdy w Stadzie nie ma roczników, Kurnik liczy po staremu w kg dziennie (z partii albo z Ustawień, domyślnie 3,7 kg). Dzisiejszy dzień liczy się jako pół dnia, bo pasza jest sypana rano i po południu. Karta paszy pokazuje, z czego liczy, np. „Liczone: 30 × 120 g = 3,6 kg dziennie · Wartość z Ustawień”.
 
 ### 4.5. Stado
 
-- **Rocznik:** nazwa, kury albo koguty, liczba ptaków, zakup albo wyklucie z datą, wiek przy zakupie w tygodniach (opcjonalnie, tylko przy zakupie), oznaczenie (opcjonalnie).
+- **Rocznik:** nazwa, liczba kur i liczba kogutów (razem w jednym roczniku), zakup albo wyklucie z datą, wiek przy zakupie w tygodniach (opcjonalnie), oznaczenie (opcjonalnie).
 - **Wiek** w pełnych miesiącach (wzór 10).
-- **Zmień liczbę:** „Ubyło” albo „Przybyło”, liczba sztuk, data, uwaga z podpowiedziami do kliknięcia: padła, ubój, sprzedana, dokupione, wyklute.
-- Ekran Stado: razem, w tym kur i kogutów; lista roczników (nazwa, kury/koguty, wiek, oznaczenie, liczba).
-- Liczba ptaków służy do gramów paszy na ptaka.
+- **Zmień liczbę:** „Ubyło” albo „Przybyło”, które (kury albo koguty), liczba, data, uwaga z podpowiedziami: padła, ubój, sprzedana, dokupione, wyklute.
+- Ekran Stado: razem, w tym kur i kogutów (oraz piskląt, jeśli są); sekcja „Klucie i pisklęta” tylko wtedy, gdy coś się kluje albo rośnie; lista roczników.
 
-Bez statusów nieśności, bez osobnych typów zdarzeń, bez nowych korekt liczby.
+**Klucie i pisklęta** (ten sam rocznik na wcześniejszym etapie):
+1. **Klucie:** inkubator albo kwoka, data wstawienia jaj, liczba jaj, niezalężone i zamarłe (opcjonalnie, do poprawienia w każdej chwili). Kurnik pokazuje dzień wysiadywania („19. dzień z 21”) i „Klucie za ≈ N dni”; od 18. dnia „Mogą się już kluć”, po 22. dniu „Minął 22. dzień”.
+2. **Wpisz wyklute:** data i liczba. Od tego dnia pisklęta mają wiek w tygodniach. Wylęgowość: wyklute z wstawionych i z zalężonych.
+   Zamiast klucia można dodać **kupione pisklęta** (data, wiek, liczba).
+3. **Przechodzą na moją mieszankę:** data, od której pisklęta jedzą Twoją mieszankę. Wcześniej nie liczą się do zużycia (pasza kupna), od tej daty liczą się jak dorosłe ptaki.
+4. **Przeniesiono do stada:** data oraz ile kur i ile kogutów. Suma musi się równać liczbie piskląt; brakujące wpisuje się wcześniej jako „Ubyło”. Pisklęta przechodzą razem. Klucie znika z sekcji i staje się zwykłym rocznikiem z datą wyklucia i historią klucia.
+
+Start pokazuje kartę klucia albo piskląt, gdy są.
+
+Bez statusów nieśności, bez przypomnień o prześwietlaniu jaj, bez magazynu paszy kupnej.
 
 ### 4.6. Ustawienia i kopia
 
 - Próg ostrzeżenia w dniach (domyślnie 30).
-- Ile zjadają dziennie, zanim zbierze się historia (domyślnie 3,7 kg).
+- Ile zjada jeden ptak dziennie, zanim zbierze się historia (domyślnie 120 g); bez stada zamiast tego kg dziennie (domyślnie 3,7 kg).
 - Cena gotowej paszy (opcjonalnie).
 - Kopia danych: „Zrób kopię” (udostępnienie pliku, a gdy telefon nie umie udostępnić — pobranie), „Pobierz plik kopii”, „Wczytaj kopię”.
 - Po 30 dniach od ostatniej kopii ekran Start pokazuje przypomnienie z przyciskiem „Zrób kopię”.
@@ -148,9 +156,9 @@ Wersja 1.5.0 obejmuje oba dawne etapy (receptury, mieszanie, magazyn, stado, kos
 | `ingredientEvents` | składnik, typ (`purchase`, `addition`, `correction`, `withdrawal`, `batch`), data, gramy, cena, partia, uwagi |
 | `recipes` | nazwa, pozycje (składnik, ilość w tysięcznych jednostki), aktualna, uwagi |
 | `batches` | receptura i jej nazwa (kopia), data mieszania, start, koniec (dzień po ostatnim dniu karmienia), `mass` (bez dodatków), `massBasis: 'base'`, pozycje (dodatki z `additive: true`, litry w `millilitres`), pozostałość |
-| `cohorts` | nazwa, `category` (`hens` / `roosters`), liczba, `dateKind` (`purchase` / `hatch`), data, wiek przy zakupie w tygodniach, oznaczenie |
-| `cohortChanges` | rocznik, `type` (`add` / `loss`), liczba, data, uwaga |
-| `settings` | próg, zużycie domyślne, cena gotowej paszy, data ostatniej kopii, licznik zapisów |
+| `cohorts` | nazwa, `hens`, `roosters`, `dateKind` (`purchase` / `hatch`), data (wyklucia albo zakupu; przy kluciu pusta), wiek przy zakupie, oznaczenie; `rearing` (klucie i pisklęta: `method`, `setDate`, `eggs`, `infertile`, `dead`, `hatched`, `chicks`, `feedFrom`) albo `null`; `joined` = dzień przeniesienia do stada |
+| `cohortChanges` | rocznik, `type` (`add` / `loss`), `sex` (`hens` / `roosters` / `young`), liczba, data, uwaga |
+| `settings` | próg, zużycie domyślne w g na ptaka (`defaultPerBird`) i w kg dziennie (`defaultDaily`), cena gotowej paszy, data ostatniej kopii, licznik zapisów |
 
 Każdy wpis ma UUID, datę utworzenia i znacznik usunięcia.
 
@@ -161,7 +169,8 @@ Każdy wpis ma UUID, datę utworzenia i znacznik usunięcia.
   - zmiana stada `loss` / `add` bez uwagi dostaje uwagę z dawnego powodu (np. „padła”, „dokupione”);
   - dawne zmiany typu `status` są pomijane; dawne korekty liczby zostają w historii jako „Korekta: X szt.” (tylko do odczytu);
   - rocznik `initial` liczy się jak zakup bez wieku („co najmniej”); dawne pola statusów są ignorowane, a usuwane przy edycji rocznika.
-- Kopie w wersjach 1–4 wczytują się. Nowa kopia ma wersję 4, więc wersja 1.4 też ją odczyta.
+  - stary rocznik z jedną kategorią dostaje całą liczbę w kurach albo w kogutach; jego zmiany dostają tę samą płeć.
+- Kopie w wersjach 1–5 wczytują się. Od wersji aplikacji 1.6.0 kopia ma wersję 5 (kury i koguty w jednym roczniku, klucie). Wersje 1.4 i 1.5 jej nie odczytają, więc powrót do nich nie jest możliwy.
 
 ---
 
@@ -182,6 +191,7 @@ Masy w gramach, kwoty w groszach; kilogramy i złote tylko na ekranie.
 10. Wiek: od daty wyklucia, a przy zakupie od daty zakupu − wiek przy zakupie (tygodnie × 7 dni); pełne miesiące, „X lat Y mies.”. Zakup bez wieku: „co najmniej”.
 11. **Ile dokupić** na N dni (60 i 90) = średnie zużycie × r × N − (stan + r × mieszanka, która została). Wynik ≤ 0: „Wystarczy na dłużej niż 2 (3) miesiące”. Zaokrąglenie w górę do pełnych kg, dla litrów do 0,1 l.
 12. Domyślna masa mieszania = masa bez dodatków ostatniej partii (najpóźniejsza data mieszania); bez partii 100 kg.
+13. **Zużycie mieszanki** między dwiema chwilami = g na ptaka × suma (liczba ptaków w dniu × część dnia). g na ptaka = zjedzona masa 3 ostatnich zakończonych partii / ptakodni w ich okresach (wspólne dni liczone raz). Liczą się ptaki głównego stada oraz pisklęta od dnia przejścia na mieszankę do dnia przeniesienia. Dni przed pierwszym rocznikiem w stadzie liczą się z liczbą ptaków z dnia, w którym ten rocznik się zaczyna. Dziś = pół dnia. Zużycie dziś = g na ptaka × ptaki dziś; z niego liczy się „Na ile starcza 100 kg”, prognozy zapasu i „Ile dokupić”. Bez stada: kg dziennie × dni.
 
 ---
 
@@ -199,7 +209,7 @@ Receptura T1: pszenica 17 kg, kukurydza 13 kg, śruta sojowa 10 kg, groch 5 kg, 
 | T6 | T5, stan rzeczywisty 1 140 kg | korekta −15 kg; stan 1 140 kg |
 | T7 | Pszenica 1 000 kg, zużycie 3,704 kg dziennie, mieszanki nie zostało | ≈ 786 dni |
 | T8 | T1 na 100 kg | 34,34 / 26,26 / 20,20 / 10,10 / 6,57 / 2,53 kg; olej 2,02 l |
-| T9 | Partia 100 kg karmiona od 10 dni, 3,704 kg dziennie | ≈ 63 kg; ≈ 17 dni |
+| T9 | Partia 100 kg, 10 pełnych dni po 3,704 kg (funkcja pozostałości) | ≈ 63 kg; ≈ 17 dni |
 | T10 | Receptura z olejem liczonym w proporcjach, ceny: pszenica 0,70, kukurydza 0,65, soja 2,00, groch 1,30, kreda 0,86, Dolmix 5,60 zł/kg, olej 4,00 zł/l | koszt 60,645 zł; 100 kg = 120,28 zł; taniej na 1 352 kg wobec gotowej po 2,00 zł/kg o 1 077,82 zł |
 | T11 | Zakup 14.04.2025, 16 tygodni, dziś 22.11.2026 | „1 rok 10 mies.” |
 | T12 | Brak cen | brak kosztów, nigdzie „0 zł” |
@@ -211,3 +221,7 @@ Receptura T1: pszenica 17 kg, kukurydza 13 kg, śruta sojowa 10 kg, groch 5 kg, 
 | T18 | Stare dane: rocznik 30, ubytek 2, status, korekta na 25 | 25 szt., bez statusu, w historii ubytek i korekta |
 | T19 | Stary „Olej” z `oil: true` | dodatek; receptura 49,5 kg; stare partie bez zmian |
 | T20 | Pokrzywa dodana jako „Własny” | następne dodanie pokrzywy: „Własny”; pszenica bez historii: „Zakup” |
+| T21 | Bez stada, 50 kg od 15.11, dziś 23.11, 3,7 kg dziennie | 8,5 dnia; zostało ok. 18,6 kg; „9. dzień karmienia” |
+| T22 | 30 ptaków, zakończona partia 33 kg w 10 dni; 20.11 ubyło 10 ptaków; partia 50 kg od 15.11 | 110 g na ptaka; dziś 2,2 kg dziennie; zostało 50 − 5 × 3,3 − 3,5 × 2,2 = 25,8 kg |
+| T23 | Rocznik 8 kur i 2 koguty, ubył 1 kogut | 9 ptaków: 8 kur, 1 kogut |
+| T24 | Klucie 01.04: 20 jaj, 3 niezalężone, 2 zamarłe; wyklucie 21.04: 12; padły 2; mieszanka od 15.06; przeniesienie 20.08: 6 kur, 4 koguty; dorosłych 20 | 18.04: 18. dzień, klucie 22.04, 15 jaj; wylęgowość 60% / 70,6%; zużycie liczy 20 ptaków do 14.06, 30 od 15.06; od 20.08 stado 30 ptaków |

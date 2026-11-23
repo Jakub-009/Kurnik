@@ -1,6 +1,6 @@
 import {live, record} from './db.js';
-import {addDays, averageFlock, batchBaseMass, batchResult, baseShare, dailyAverage, daysBetween, flockCount,
-  mixtureCost, recipeComposition, remainingMix, stock, supplyForecast} from './calc/index.js';
+import {addDays, averageFlock, batchBaseMass, batchResult, baseShare, cohortStage, dayNumber, exhaustPoint, feedModel, flockCount,
+  mixtureCost, nowPoint, recipeComposition, stock, supplyForecast} from './calc/index.js';
 
 export const latestFirst = (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
 export const recipeOrder = (a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name, 'pl');
@@ -62,21 +62,23 @@ export function derive(data, today) {
   const batches = live(data.batches).sort(latestFirst);
   const current = recipes.find(row => row.current);
   const composition = current ? recipeComposition(current, ingredients) : null;
-  const daily = dailyAverage(batches, settings.defaultDaily, addDays(today, 1));
+  const model = feedModel({batches, cohorts:data.cohorts, changes:data.cohortChanges, settings, today});
+  const daily = model.daily;
+  const now = nowPoint(today);
   const open = batches.filter(row => row.start <= today && !isFinished(row, today))
     .sort((a,b) => a.start.localeCompare(b.start) || a.createdAt.localeCompare(b.createdAt));
-  let usedUntil = '';
+  let usedUntil = -Infinity;
   // Zużycie przypisywane od najstarszej niezakończonej partii. Masy bez dodatków.
   const openStatus = open.map(batch => {
     const mass = batchBaseMass(batch);
-    const available = usedUntil > batch.start ? usedUntil : batch.start;
-    const elapsed = Math.max(0, daysBetween(available, today));
-    const remaining = remainingMix({mass, start:available}, daily, today);
-    const used = mass - remaining;
-    if (daily > 0) usedUntil = new Date(Date.parse(available) + (mass - remaining) / daily * 86400000).toISOString();
-    return {batch, elapsed, used, remaining};
+    const available = Math.max(usedUntil, dayNumber(batch.start));
+    const used = Math.min(mass, model.use(available, now));
+    const endsAt = exhaustPoint(model, available, mass);
+    usedUntil = endsAt;
+    return {batch, elapsed:Math.max(0, now - dayNumber(batch.start)), used, remaining:mass - used, endsAt};
   });
   const active = openStatus.find(row => row.remaining > 0) ?? openStatus.at(-1);
+  const runsOutAt = openStatus.length ? openStatus.at(-1).endsAt : null;
   const mixed = openStatus.reduce((sum, row) => sum + row.remaining, 0);
   const received = new Set(live(data.ingredientEvents)
     .filter(row => ['addition','purchase','correction'].includes(row.type)).map(row => row.ingredientId));
@@ -91,9 +93,10 @@ export function derive(data, today) {
   }).sort((a,b) => (a.outlook?.days ?? Infinity) - (b.outlook?.days ?? Infinity) ||
     Number(b.known) - Number(a.known) || a.ingredient.name.localeCompare(b.ingredient.name, 'pl'));
   const flock = flockCount(data.cohorts, data.cohortChanges, today);
-  const cohorts = live(data.cohorts);
-  return {settings, ingredients, recipes, batches, current, composition, daily, active, openStatus, mixed,
-    stocks, flock, cohorts};
+  const cohorts = live(data.cohorts).filter(row => cohortStage(row) === 'flock');
+  const rearing = live(data.cohorts).filter(row => cohortStage(row) !== 'flock');
+  return {rearing, settings, ingredients, recipes, batches, current, composition, daily, model, active, openStatus, mixed,
+    runsOutAt, stocks, flock, cohorts};
 }
 
 export function batchStats(batch, data, derived, today) {

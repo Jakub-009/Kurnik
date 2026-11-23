@@ -173,8 +173,21 @@ export function roundPurchase(grams, unit, density) {
   return Math.ceil(Math.round(grams / 1000 * 1e6) / 1e6);
 }
 
-// Stado: liczba ptaków z rocznika i zmian. Stare zdarzenia bez typu to korekty.
+// ===== Stado =====
+// Rocznik ma osobno kury i koguty (`hens`, `roosters`). Klucie i pisklęta to ten sam rocznik na wcześniejszym etapie:
+// `rearing` = {method, setDate, eggs, infertile, dead, hatched, chicks, feedFrom}. Do głównego stada wchodzi w dniu `joined`.
+// Zmiany liczby mają `sex`: 'hens', 'roosters' albo 'young' (pisklęta). Stare zdarzenia bez typu to korekty.
 export const flockEventKind = event => event.type ?? 'correction';
+export const HATCH_DAYS = 21;
+export const HATCH_EARLY = 18;
+
+export function cohortStage(cohort) {
+  if (!cohort.rearing || cohort.joined) return 'flock';
+  return cohort.rearing.chicks == null ? 'incubation' : 'chicks';
+}
+
+// Dzień, od którego ptaki liczą się w głównym stadzie.
+export const flockStart = cohort => cohort.joined ?? cohort.date;
 
 export function cohortEvents(cohort, changes, date = '9999-12-31') {
   return changes.filter(row => !row.deleted && row.cohortId === cohort.id && row.date <= date &&
@@ -183,53 +196,185 @@ export function cohortEvents(cohort, changes, date = '9999-12-31') {
       a.createdAt.localeCompare(b.createdAt) || b.id.localeCompare(a.id));
 }
 
-function applyEvent(count, event) {
+function applyEvent(counts, event) {
+  const sex = event.sex ?? 'hens';
   switch (flockEventKind(event)) {
-    case 'add': return count + event.count;
-    case 'loss': return count - event.count;
-    case 'correction': return event.count;
-    default: return count;
+    case 'add': counts[sex] += event.count; break;
+    case 'loss': counts[sex] -= event.count; break;
+    case 'correction': counts[sex] = event.count; break;
   }
+  return counts;
 }
 
-export function cohortCount(cohort, changes, date) {
-  if (date < cohort.date) return 0;
-  return cohortEvents(cohort, changes, date).reduce(applyEvent, cohort.count);
+// Liczby w danym dniu: kury i koguty w głównym stadzie oraz pisklęta przed przeniesieniem.
+export function cohortCounts(cohort, changes, date) {
+  const counts = {hens:0, roosters:0, young:0};
+  const events = cohortEvents(cohort, changes, date);
+  const start = flockStart(cohort);
+  if (cohortStage(cohort) === 'flock' && start && date >= start) {
+    counts.hens = cohort.hens;
+    counts.roosters = cohort.roosters;
+    for (const event of events) if (event.sex !== 'young' && event.date >= start) applyEvent(counts, event);
+  }
+  const rearing = cohort.rearing;
+  if (rearing?.chicks != null && cohort.date && date >= cohort.date && !(cohort.joined && date >= cohort.joined)) {
+    counts.young = rearing.chicks;
+    for (const event of events) if (event.sex === 'young') applyEvent(counts, event);
+  }
+  return counts;
 }
 
+export const cohortCount = (cohort, changes, date) => {
+  const counts = cohortCounts(cohort, changes, date);
+  return counts.hens + counts.roosters + counts.young;
+};
+
+// Żadna z liczb nie może spaść poniżej zera ani przekroczyć limitu.
 export function validCohortHistory(cohort, changes, max = 1000000) {
-  let count = cohort.count;
+  const counts = {hens:cohort.hens ?? 0, roosters:cohort.roosters ?? 0, young:cohort.rearing?.chicks ?? 0};
+  const start = flockStart(cohort);
   for (const event of cohortEvents(cohort, changes)) {
-    if (event.date < cohort.date) return false;
-    count = applyEvent(count, event);
-    if (count < 0 || count > max) return false;
+    if (cohort.date && event.date < cohort.date) return false;
+    if (event.sex !== 'young' && start && event.date < start) return false;
+    if (event.sex === 'young' && cohort.joined && event.date >= cohort.joined) return false;
+    applyEvent(counts, event);
+    if (Object.values(counts).some(value => value < 0 || value > max)) return false;
   }
   return true;
 }
 
 export function flockCount(cohorts, changes, date) {
-  const totals = {hens: 0, roosters: 0};
+  const totals = {hens:0, roosters:0, young:0};
   for (const cohort of cohorts) {
     if (cohort.deleted) continue;
-    totals[cohort.category] += cohortCount(cohort, changes, date);
+    const counts = cohortCounts(cohort, changes, date);
+    totals.hens += counts.hens;
+    totals.roosters += counts.roosters;
+    totals.young += counts.young;
   }
-  return {...totals, total: totals.hens + totals.roosters};
+  return {...totals, total:totals.hens + totals.roosters};
+}
+
+// Ptaki jedzące mieszankę w danym dniu: główne stado i pisklęta od dnia przejścia na mieszankę.
+export function feedingBirds(cohorts, changes, date) {
+  let total = 0;
+  for (const cohort of cohorts) {
+    if (cohort.deleted) continue;
+    const counts = cohortCounts(cohort, changes, date);
+    total += counts.hens + counts.roosters;
+    if (cohort.rearing?.feedFrom && date >= cohort.rearing.feedFrom) total += counts.young;
+  }
+  return total;
 }
 
 export function averageFlock(cohorts, changes, start, end) {
-  if (!cohorts.some(row => !row.deleted && row.date <= start)) return null;
+  const counter = birdCounter(cohorts, changes);
+  if (!counter) return null;
   const duration = daysBetween(start, end);
-  if (!(duration > 0)) return flockCount(cohorts, changes, start).total;
-  const dates = [...new Set([start, end, ...cohorts.filter(row => !row.deleted).map(row => row.date),
-    ...changes.filter(row => !row.deleted).map(row => row.date)])]
-    .filter(date => date >= start && date <= end).sort();
-  const birdDays = dates.slice(0, -1).reduce((sum, date, i) =>
-    sum + flockCount(cohorts, changes, date).total * daysBetween(date, dates[i + 1]), 0);
-  return birdDays / duration;
+  if (!(duration > 0)) return counter(start);
+  return birdDays(counter, dayNumber(start), dayNumber(end)) / duration;
+}
+
+// Klucie: dzień wysiadywania (1 = dzień wstawienia) i przewidywana data.
+export function incubation(cohort, today) {
+  const {setDate, eggs, infertile, dead} = cohort.rearing;
+  const day = Math.floor(daysBetween(setDate, today)) + 1;
+  return {day, due:addDays(setDate, HATCH_DAYS), left:HATCH_DAYS - day + 1,
+    eggsLeft:eggs - (infertile ?? 0) - (dead ?? 0), early:day >= HATCH_EARLY};
+}
+
+// Wylęgowość: wyklute z wstawionych i z zalężonych.
+export function hatchRate(rearing) {
+  if (rearing?.hatched == null || !rearing.eggs) return null;
+  const fertile = rearing.eggs - (rearing.infertile ?? 0);
+  return {ofSet:rearing.hatched / rearing.eggs, ofFertile:fertile > 0 ? rearing.hatched / fertile : null};
+}
+
+export const weeksOld = (cohort, today) => Math.max(0, Math.floor(daysBetween(cohort.date, today) / 7));
+
+// ===== Model zużycia =====
+// Czas liczony w dniach (liczba zmiennoprzecinkowa). Dziś liczy się jako pół dnia,
+// bo pasza jest sypana rano i po południu.
+export const dayNumber = date => Date.parse(date) / DAY;
+export const dateOf = number => new Date(Math.floor(number + 1e-9) * DAY).toISOString().slice(0, 10);
+export const nowPoint = today => dayNumber(today) + .5;
+export const defaultPerBird = 120;
+
+// Liczba ptaków jedzących mieszankę w danym dniu. Dni przed pierwszym rocznikiem w stadzie dostają liczbę stada
+// z dnia, w którym zaczyna się pierwszy rocznik, żeby rocznik wpisany z późniejszą datą nie zerował wcześniejszych partii.
+export function birdCounter(cohorts, changes) {
+  const live = cohorts.filter(row => !row.deleted);
+  const starts = live.filter(row => cohortStage(row) === 'flock' && flockStart(row)).map(flockStart).sort();
+  if (!starts.length && !live.some(row => row.rearing?.feedFrom)) return null;
+  const first = starts[0];
+  const cache = new Map();
+  return date => {
+    if (!cache.has(date)) {
+      const flock = flockCount(live, changes, first && date < first ? first : date).total;
+      cache.set(date, feedingBirds(live, changes, date) - flockCount(live, changes, date).total + flock);
+    }
+    return cache.get(date);
+  };
+}
+
+// Ptakodni między dwoma punktami czasu.
+function birdDays(birds, from, to) {
+  let total = 0;
+  for (let day = Math.floor(from); day < to; day++) {
+    const overlap = Math.min(to, day + 1) - Math.max(from, day);
+    if (overlap > 0) total += overlap * birds(dateOf(day));
+  }
+  return total;
+}
+
+function union(intervals) {
+  const sorted = intervals.slice().sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [from, to] of sorted) {
+    const last = merged.at(-1);
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged;
+}
+
+// Zużycie: gramy na ptaka z 3 ostatnich zakończonych partii, a bez stada — kg dziennie jak dawniej.
+// use(from, to) zwraca gramy mieszanki (bez dodatków) zjedzone w tym czasie.
+export function feedModel({batches, cohorts, changes, settings, today}) {
+  const birds = birdCounter(cohorts, changes);
+  const recent = finishedBatches(batches, addDays(today, 1)).slice(0, 3);
+  if (!birds) {
+    const daily = dailyAverage(batches, settings.defaultDaily, addDays(today, 1));
+    return {perBird:null, birds:null, daily, fromHistory:recent.length > 0, use:(from, to) => Math.max(0, to - from) * daily};
+  }
+  const consumed = recent.reduce((sum, row) => sum + batchResult(row).consumed, 0);
+  const days = union(recent.map(row => [dayNumber(row.start), dayNumber(row.end)]))
+    .reduce((sum, [from, to]) => sum + birdDays(birds, from, to), 0);
+  const fromHistory = days > 0;
+  const perBird = fromHistory ? consumed / days : settings.defaultPerBird ?? defaultPerBird;
+  const count = birds(today);
+  return {perBird, birds:count, daily:perBird * count, fromHistory,
+    use:(from, to) => from < to ? perBird * birdDays(birds, from, to) : 0};
+}
+
+// Kiedy skończy się `mass` gramów, jedzonych od punktu `from`. Szukanie po dniach (najwyżej 20 lat).
+export function exhaustPoint(model, from, mass) {
+  if (mass <= 0) return from;
+  let point = from;
+  let left = mass;
+  for (let i = 0; i < 7300; i++) {
+    const next = Math.floor(point) + 1;
+    const use = model.use(point, next);
+    if (use >= left) return point + (next - point) * left / use;
+    left -= use;
+    point = next;
+  }
+  return Infinity;
 }
 
 // Wiek w pełnych miesiącach. Zakup bez podanego wieku i stary „stan początkowy” = „co najmniej”.
 export function cohortAge(cohort, today) {
+  if (!cohort.date) return null;
   const bought = cohort.dateKind !== 'hatch';
   const minimum = bought && cohort.weeks == null;
   const from = bought ? addDays(cohort.date, -(cohort.weeks ?? 0) * 7) : cohort.date;

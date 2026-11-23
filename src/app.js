@@ -7,7 +7,7 @@ import * as forms from './forms.js';
 import {FieldError, html, showFormError} from '../ui/components.js';
 import {t} from '../ui/texts.js';
 
-const version = '1.5.0';
+const version = '1.6.0';
 
 const app = document.getElementById('app');
 const snackbar = document.getElementById('snackbar');
@@ -22,6 +22,7 @@ const routes = {
   mix:(ctx,id) => forms.mixForm(ctx,'mix',id,history.state?.origin),
   'batch-form':(ctx,id) => forms.mixForm(ctx,'batch-form',id),
   finish:forms.finishForm, 'cohort-form':forms.cohortForm, change:forms.changeForm, settings:forms.settingsForm,
+  'rearing-form':forms.rearingForm, hatch:forms.hatchForm, 'feed-switch':forms.feedSwitchForm, transfer:forms.transferForm,
 };
 
 let db;

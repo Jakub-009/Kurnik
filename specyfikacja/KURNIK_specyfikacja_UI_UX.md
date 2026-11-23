@@ -1,6 +1,6 @@
 # KURNIK — specyfikacja UI/UX
 
-Wersja: 4.0 (stan aplikacji 1.5.0, tylko dla właściciela) · 23.11.2026
+Wersja: 4.2 (stan aplikacji 1.6.0, tylko dla właściciela) · 23.11.2026
 Dokument towarzyszący: `KURNIK_specyfikacja_funkcjonalna.md` (wersja 5.0)
 
 ---
@@ -144,22 +144,28 @@ Pasek nawigacji: **Start, Pasza, Magazyn, Stado.** Ustawienia pod ikoną w górn
 | Składnik | „Powinno być”, prognoza, ostatnia cena; „Dodaj”, „Korekta stanu”, „Inne pobranie”, „Edytuj”; „Ile dokupić”; historia |
 | Dodaj do magazynu | składnik, Zakup / Własny, ilość, cena (tylko zakup), data, uwagi |
 | Korekta stanu | „Powinno być”, pole „Ile jest naprawdę”, różnica przed zapisem |
-| Stado | karta „Razem” (liczba ptaków, w tym kur i kogutów); roczniki; FAB „Dodaj rocznik” |
-| Rocznik | liczba, kury/koguty, data, wiek, oznaczenie, historia zmian liczby; „Zmień liczbę”, „Edytuj” |
-| Zmień liczbę | Ubyło / Przybyło, ile sztuk, data, uwaga z podpowiedziami |
+| Stado | karta „Razem” (liczba ptaków, kury, koguty, pisklęta); sekcja „Klucie i pisklęta”, gdy coś jest; roczniki; tekst „Wstaw jaja albo dodaj pisklęta”; FAB „Dodaj rocznik” |
+| Rocznik | liczba, kury i koguty, data, wiek, oznaczenie, z klucia (jaja, wyklute, przeniesienie), historia zmian; „Zmień liczbę”, „Edytuj” |
+| Dodaj rocznik | nazwa, kury i koguty (dwa pola obok siebie), Zakup / Wyklucie, data, wiek przy zakupie, oznaczenie |
+| Klucie albo pisklęta | Inkubator / Kwoka / Kupione pisklęta, nazwa, data wstawienia, jaja, niezalężone, zamarłe (albo data zakupu, wiek, liczba piskląt) |
+| Klucie | „Mogą się już kluć” albo „za ≈ N dni”, dzień z 21, liczby jaj; „Wpisz wyklute”, „Edytuj” |
+| Pisklęta | liczba, wiek w tygodniach, pasza (kupna albo Twoja mieszanka od …), wylęgowość; „Przechodzą na moją mieszankę”, „Przeniesiono do stada”, „Zmień liczbę”, „Edytuj” |
+| Zmień liczbę | Ubyło / Przybyło, Kury / Koguty (przy pisklętach bez wyboru), ile sztuk, data, uwaga z podpowiedziami |
 | Ustawienia | próg ostrzeżenia, zużycie domyślne, cena gotowej paszy, kopia danych, numer wersji |
 
 ---
 
 ## 8. Ekran startowy
 
-Bez przewijania przy foncie 100%. Trzy karty o tej samej budowie (tytuł, duża zielona liczba, jedna linijka podpisu, cała karta klikalna):
+Start pokazuje „co dalej”, czyli to, czego nie widać razem na innych ekranach. Nie powiela Paszy.
 
-1. **Pasza w użyciu:** „≈ 63 kg · ≈ 17 dni”, podpis: receptura i dzień karmienia. Bez partii: „Brak mieszanki w użyciu” i przycisk tonalny „Mieszam”.
-2. **Najbliższy brak:** „≈ N dni”, podpis: składnik i „skończy się ok. …”. Poniżej progu liczba w kolorze tertiary z ikoną ostrzeżenia. Bez wpisanych stanów: „Wpisz, ile masz poszczególnych składników, żeby zobaczyć, na ile wystarczą.” i „Wpisz stany”.
-3. **Stado:** liczba ptaków, podpis „N kur, N kogutów”. Bez roczników: „Dodaj pierwszy rocznik”.
+1. **Następne mieszanie:** „za ≈ 5 dni”, podpis: „Mieszanka skończy się ok. 28.11 · zostało ok. 19,4 kg”. Pod spodem sprawdzenie magazynu na kolejną partię tej samej masy: „Na następną partię (50 kg) masz wszystko.” albo „…brakuje: Śruta sojowa 6 kg.” Bez partii: „Brak mieszanki w użyciu” i przycisk „Mieszam”.
+2. **Kończy się najszybciej:** 3 składniki z najkrótszą prognozą („≈ N dni”); poniżej progu w kolorze tertiary z ikoną i podpowiedzią „dokup ok. X na 2 miesiące”. Każdy prowadzi do składnika. Bez wpisanych stanów: „Wpisz stany”.
+3. **Stado i zużycie:** liczba ptaków, kur i kogutów, „ok. 120 g na ptaka dziennie, razem 3,6 kg”, skąd ta wartość (z partii albo z Ustawień), koszt paszy na miesiąc przy wpisanych cenach. Bez stada: zachęta do wpisania stada i „Dodaj rocznik”.
+4. Karta klucia albo piskląt (nad kartą stada), gdy są: „za ≈ 4 dni” / „Mogą się już kluć” albo liczba piskląt, wiek i pasza.
+5. Przypomnienie o kopii (po 30 dniach) z „Zrób kopię”.
 
-Pod kartami tylko przypomnienie o kopii (po 30 dniach) z przyciskiem „Zrób kopię”. Bez FAB, bez listy magazynu.
+Karta „Pasza w użyciu” na ekranie Pasza mówi wprost: „Zostało ok. 19,4 kg”, „Starczy do ok. 28.11 · ≈ 5 dni”, dzień karmienia i podstawę wyliczenia („Liczone: 30 × 120 g = 3,6 kg dziennie · Wartość z Ustawień”).
 
 ---
 
