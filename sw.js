@@ -1,4 +1,4 @@
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CACHE_PREFIX = 'kurnik:' + self.registration.scope + ':';
 const CACHE = CACHE_PREFIX + VERSION;
 const SHELL = [
@@ -27,14 +27,14 @@ self.addEventListener('fetch', event => {
   const {request} = event;
   if (request.method !== 'GET' || !request.url.startsWith(self.registration.scope)) return;
   event.respondWith((async () => {
-    const cache = await caches.open(CACHE);
+    const options = {cacheName:CACHE};
     if (request.mode === 'navigate') {
       const url = new URL(request.url);
       const scope = new URL(self.registration.scope);
       if ([scope.pathname,scope.pathname + 'index.html'].includes(url.pathname)) {
-        return (await cache.match('./index.html')) ?? fetch(request);
+        return (await caches.match('./index.html',options)) ?? fetch(request);
       }
     }
-    return (await cache.match(request)) ?? fetch(request);
+    return (await caches.match(request,options)) ?? fetch(request);
   })());
 });

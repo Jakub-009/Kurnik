@@ -1,9 +1,9 @@
 import {stores, live, refreshPrices} from './db.js';
-import {recipeComposition} from './calc/index.js';
+import {flockEventKind,recipeComposition,validCohortHistory} from './calc/index.js';
 import {validDate} from '../ui/components.js';
 
 const format = 'kurnik-backup';
-const version = 1;
+const version = 2;
 const text = (value, max = 1000) => typeof value === 'string' && value.length <= max;
 const name = value => text(value,80) && value.trim().length > 0;
 const int = (value,min = 0,max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= min && value <= max;
@@ -35,7 +35,7 @@ export function decodeBackup(raw) {
   let source;
   try { source = JSON.parse(raw); }
   catch { throw new Error('Plik nie jest poprawnym JSON-em. Wybierz kopię Kurnika.'); }
-  if (source?.format !== format || source.version !== version || !source.data || !date(source.exportedAt)) {
+  if (source?.format !== format || ![1,version].includes(source.version) || !source.data || !date(source.exportedAt)) {
     throw new Error('Format lub wersja kopii nie jest obsługiwana.');
   }
   const data = Object.fromEntries(stores.map(key => [key,source.data[key]]));
@@ -85,6 +85,7 @@ export function decodeBackup(raw) {
     } else {
       requireThat(event.batchId === null);
       if (event.type === 'purchase') requireThat(event.grams > 0 && ['per-kg','per-litre','total'].includes(event.priceMode));
+      else if (event.type === 'addition') requireThat(event.grams > 0 && event.price === null);
       else if (event.type === 'withdrawal') requireThat(event.grams < 0 && event.price === null);
       else requireThat(event.type === 'correction' && event.price === null && int(event.measured,0));
     }
@@ -96,15 +97,27 @@ export function decodeBackup(raw) {
   }
   for (const cohort of data.cohorts) {
     requireThat(name(cohort.name) && ['hens','roosters'].includes(cohort.category) && date(cohort.date) &&
-      ['hatch','purchase'].includes(cohort.dateKind) && (cohort.weeks === null ||
+      ['hatch','purchase','initial'].includes(cohort.dateKind) && (cohort.weeks === null ||
         (cohort.dateKind === 'purchase' && int(cohort.weeks,0,5200))) &&
       int(cohort.count,0,1000000) && text(cohort.mark,80) && text(cohort.notes));
+    requireThat(cohort.origin === undefined || cohort.origin === 'initial' ||
+      (cohort.origin === 'purchase' && cohort.dateKind === 'purchase') ||
+      (cohort.origin === 'rearing' && cohort.dateKind === 'hatch'));
+    requireThat(cohort.status == null || (cohort.category === 'hens' && ['young','laying','retired'].includes(cohort.status)));
+    requireThat(cohort.expectedStart == null || (cohort.category === 'hens' && date(cohort.expectedStart)));
+    requireThat(cohort.layingSince == null || (['laying','retired'].includes(cohort.status) && date(cohort.layingSince)));
   }
   for (const change of data.cohortChanges) {
     const cohort = cohorts.get(change.cohortId);
-    requireThat(cohort && date(change.date) && (change.deleted || (!cohort.deleted && change.date >= cohort.date)) &&
-      int(change.count,0,1000000) && text(change.notes));
+    requireThat(cohort && date(change.date) && (change.deleted || (!cohort.deleted && change.date >= cohort.date)) && text(change.notes));
+    requireThat(change.order === undefined || int(change.order,1));
+    const kind = flockEventKind(change);
+    if (kind === 'status') requireThat(['young','laying','retired'].includes(change.status));
+    else if (kind === 'add') requireThat(int(change.count,1,1000000) && ['purchase','rearing'].includes(change.origin));
+    else if (kind === 'loss') requireThat(int(change.count,1,1000000) && ['died','culled','slaughter'].includes(change.reason));
+    else requireThat(kind === 'correction' && int(change.count,0,1000000));
   }
+  requireThat(live(data.cohorts).every(cohort => validCohortHistory(cohort,data.cohortChanges)));
   const settings = data.settings[0];
   requireThat(data.settings.length === 1 && !settings.deleted && int(settings.revision) &&
     int(settings.threshold,1,3650) && int(settings.defaultDaily,1,10000000000) &&

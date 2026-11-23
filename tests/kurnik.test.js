@@ -1,11 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {averageFlock,batchResult,cohortAge,dailyAverage,ingredientMass,mixtureCost,recipeComposition,
-  remainingMix,savings,scaleRecipe,stock,supplyForecast} from '../src/calc/index.js';
+import {averageFlock,batchResult,cohortAge,cohortState,dailyAverage,flockCount,ingredientMass,mixtureCost,recipeComposition,
+  remainingMix,savings,scaleRecipe,stock,supplyForecast,validCohortHistory} from '../src/calc/index.js';
 import {decodeBackup,encodeBackup} from '../src/backup.js';
 import {record} from '../src/db.js';
 import {derive,putBatch,removeBatch} from '../src/model.js';
-import {recipeView} from '../src/views.js';
+import {recipeView,start} from '../src/views.js';
 import * as fmt from '../ui/format.js';
 
 const today = '2026-11-22';
@@ -142,4 +142,91 @@ test('kopię można odtworzyć i zweryfikować przed zapisem', () => {
   assert.deepEqual(restored,{...data,settings:[{...data.settings[0],lastExport:today}]});
   data.batches[0].mass += 1;
   assert.throws(() => decodeBackup(encodeBackup(data,today)),/niespójne/);
+});
+
+test('Start ma trzy pozycje magazynowe i odróżnia brak stanu od wpisanego zera', () => {
+  const {data,ingredients} = fixture();
+  const render = () => {
+    const derived = derive(data,today);
+    return {derived,screen:start({data,derived,today})};
+  };
+  assert.equal(render().screen.floating,undefined);
+  assert.equal((render().screen.body.match(/Stan do wpisania/g) ?? []).length,3);
+  assert.doesNotMatch(render().screen.body,/≈ 0 dni/);
+
+  data.ingredientEvents.push(
+    record({ingredientId:ingredients[0].id, type:'addition', grams:100000}),
+    record({ingredientId:ingredients[1].id, type:'correction', grams:0}),
+    record({ingredientId:ingredients[5].id, type:'batch', grams:-1000}),
+    record({ingredientId:ingredients[3].id, type:'purchase', grams:1000})
+  );
+  const {derived,screen} = render();
+  assert.deepEqual(derived.stocks.slice(0,3).map(row => row.ingredient.name),['Kukurydza','Groch','Pszenica']);
+  assert.equal(derived.stocks[0].outlook.days,0);
+  assert.equal(derived.stocks.find(row => row.ingredient.name === 'Dolmix DN').outlook,null);
+  assert.match(screen.body,/≈ 0 dni/);
+});
+
+test('mieszanie pokazuje zaokrąglenie bez utraty precyzji w partii', () => {
+  const {composition} = fixture();
+  const [wheat] = scaleRecipe(composition,100000);
+  assert.equal(wheat.grams,33717);
+  assert.equal(fmt.mixingQuantity(wheat.grams / 1000),'≈ 33,7 kg');
+  assert.equal(fmt.mixingQuantity(1.25),'1,25 kg');
+  assert.equal(fmt.mixingQuantity(.003),'0,003 kg');
+});
+
+test('zdarzenia rocznika liczą obsadę i status na podaną datę', () => {
+  const cohort = record({name:'Kury',category:'hens',date:'2026-06-01',dateKind:'hatch',count:10,status:'young'});
+  const changes = [
+    {type:'add',date:'2026-07-01',count:3,origin:'purchase'},
+    {type:'loss',date:'2026-08-01',count:1,reason:'died'},
+    {type:'status',date:'2026-09-01',status:'laying'},
+    {date:'2026-10-01',count:9},
+    {type:'status',date:'2026-11-01',status:'retired'}
+  ].map(fields => record({...fields,cohortId:cohort.id}));
+  assert.equal(validCohortHistory(cohort,changes),true);
+  assert.equal(validCohortHistory(cohort,changes.slice(3)),false);
+  assert.equal(validCohortHistory(cohort,[...changes,record({cohortId:cohort.id,type:'loss',date:today,count:10})]),false);
+  assert.equal(cohortState(cohort,changes,'2026-08-31').count,12);
+  assert.equal(cohortState(cohort,changes,'2026-09-01').layingSince,'2026-09-01');
+  assert.equal(flockCount([cohort],changes,'2026-10-01').laying,9);
+  assert.equal(flockCount([cohort],changes,today).retired,9);
+  assert.equal(averageFlock([cohort],changes,'2026-07-31','2026-08-02'),12.5);
+  assert.equal(averageFlock([cohort],changes,'2026-05-31','2026-06-02'),null);
+});
+
+test('stare kopie zachowują liczebność bez przypisywania kur do niosek, a nowe obsługują zdarzenia', () => {
+  const {data,ingredients} = fixture();
+  const cohort = record({name:'Kury',category:'hens',date:'2026-06-01',dateKind:'hatch',count:10,
+    weeks:null,mark:'',notes:''});
+  const oldCorrection = record({cohortId:cohort.id,date:'2026-07-01',count:9,notes:''});
+  data.cohorts.push(cohort);
+  data.cohortChanges.push(oldCorrection);
+  const oldBackup = JSON.parse(encodeBackup(data,today));
+  oldBackup.version = 1;
+  const oldData = decodeBackup(JSON.stringify(oldBackup));
+  assert.equal(flockCount(oldData.cohorts,oldData.cohortChanges,today).unknown,9);
+  assert.equal(flockCount(oldData.cohorts,oldData.cohortChanges,today).laying,0);
+
+  Object.assign(cohort,{status:'young',origin:'rearing',expectedStart:'2026-08-01'});
+  data.cohortChanges.push(record({cohortId:cohort.id,type:'status',date:'2026-08-01',status:'laying',notes:''}));
+  data.ingredientEvents.push(record({ingredientId:ingredients[0].id,type:'addition',date:today,grams:123000,
+    measured:null,price:null,priceMode:null,batchId:null,notes:''}));
+  const saved = decodeBackup(encodeBackup(data,today));
+  assert.equal(flockCount(saved.cohorts,saved.cohortChanges,today).laying,9);
+  assert.equal(saved.ingredientEvents[0].grams,123000);
+  data.cohortChanges[1].status = 'retired';
+  assert.throws(() => decodeBackup(encodeBackup(data,today)),/niespójne/);
+});
+
+test('zdarzenia zapisane w tym samym momencie zachowują kolejność wpisów', () => {
+  const cohort = record({category:'hens',date:today,count:10,status:'young'});
+  const fields = {cohortId:cohort.id,date:today,createdAt:'2026-11-22T12:00:00.000Z'};
+  const events = [
+    record({...fields,type:'correction',count:9,order:3}),
+    record({...fields,type:'add',count:3,order:2}),
+    record({...fields,type:'loss',count:2,order:1})
+  ];
+  assert.equal(cohortState(cohort,events,today).count,9);
 });

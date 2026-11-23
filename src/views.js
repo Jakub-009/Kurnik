@@ -1,4 +1,4 @@
-import {addDays, cohortAge, cohortCount, daysBetween, mixtureCost, recipeComposition, savings} from './calc/index.js';
+import { cohortAge, cohortEvents, cohortOrigin, cohortState, daysBetween, flockEventKind, mixtureCost, recipeComposition, savings} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, latestFirst, showAmount} from './model.js';
 import {banner, button, details, empty, fab, forecast, html, link, row, warning} from '../ui/components.js';
@@ -7,7 +7,7 @@ import {icon} from '../ui/icons.js';
 
 const symbol = {start:'home', feed:'feed', stock:'stock', flock:'flock'};
 const tabs = {start:'Start', feed:'Pasza', stock:'Magazyn', flock:'Stado'};
-const movementNames = {purchase:'Zakup', correction:'Korekta stanu', withdrawal:'Inne pobranie', batch:'Zużycie w partii'};
+const movementNames = {purchase:'Zakup', addition:'Dodanie zapasu', correction:'Korekta stanu', withdrawal:'Inne pobranie', batch:'Zużycie w partii'};
 
 export function frame(screen, route) {
   const {title, subtitle = '', parent, form = false, body, floating = ''} = screen;
@@ -23,13 +23,15 @@ export function frame(screen, route) {
 }
 
 function stockRows(stocks, ctx, compact = false) {
-  return '<div class="list">' + stocks.map(({ingredient, grams, outlook}) => {
-    const state = fmt.quantity(showAmount(grams, ingredient), ingredient.unit);
-    return row({name:ingredient.name, symbol:compact ? '' : 'stock', route:'ingredient/' + ingredient.id,
-      sub:compact ? html(state) : (grams < 0 ? warning('Sprawdź stan') : ''),
-      value:compact ? '<span class="home-forecast">' + (forecast(outlook, ctx.derived.settings.threshold, ctx.today, true) || '') + '</span>' : `<strong class="stock-value">${state}</strong>`})
-      .replace('</a>', compact ? '</a>' : '</a>' + (outlook
-        ? '<div class="stock-projection">' + forecast(outlook, ctx.derived.settings.threshold, ctx.today) + '</div>' : ''));
+  const threshold = ctx.derived.settings.threshold;
+  return '<div class="list">' + stocks.map(({ingredient,grams,known,outlook}) => {
+    const state = known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania';
+    const notices = known && grams < 0 ? warning('Sprawdź stan') : outlook && outlook.days < threshold ? warning('Na wyczerpaniu') : '';
+    const projected = outlook ? forecast(outlook,threshold,ctx.today,compact) : '';
+    const item = row({name:ingredient.name,symbol:compact ? '' : 'stock',route:'ingredient/' + ingredient.id,
+      sub:[compact || !known ? html(state) : '',notices].filter(Boolean).join('<br>'),
+      value:compact ? projected : known ? `<strong class="stock-value">${state}</strong>` : ''});
+    return item + (projected && !compact ? '<div class="stock-projection">' + projected + '</div>' : '');
   }).join('') + '</div>';
 }
 
@@ -49,34 +51,19 @@ function currentCard(ctx, home = false) {
     ${home ? '' : '<div>' + link('Szczegóły partii','batch/' + batch.id) + '</div>'}</section>`;
 }
 
-function lowBanner(ctx, home) {
-  const entries = ctx.derived.stocks.filter(item => item.outlook && item.outlook.days < ctx.derived.settings.threshold);
-  if (!entries.length) return '';
-  const selected = home ? entries.slice(0, 3) : entries;
-  const desc = selected.map(({ingredient, outlook}) => html(ingredient.name) + ' ≈ ' + fmt.days(outlook.days)).join(' · ');
-  const more = entries.length - selected.length;
-  const action = home ? link('Sprawdź', 'stock') : '';
-  return banner('Do uzupełnienia', desc + (more ? ' · +' + fmt.number(more) : '') + ' <small>(prognoza)</small>', action, home);
-}
-
 function flockText(flock) {
   return `${fmt.birds(flock.total)} · ${fmt.hens(flock.hens)}, ${fmt.roosters(flock.roosters)}`;
 }
 
 export function start(ctx) {
   const {derived, today} = ctx;
-  const negatives = derived.stocks.filter(row => row.grams < 0);
-  const negativeAction = negatives.length === 1 ? 'movement/correction/' + negatives[0].ingredient.id : 'movement/correction';
-  const smallStock = derived.stocks.filter(row => row.outlook).slice(0, 3);
+  const smallStock = derived.stocks.slice(0,3);
   const last = derived.settings.lastExport;
   const due = daysBetween(last ?? derived.settings.createdAt.slice(0,10), today) > 30;
-  return {title:'Kurnik', subtitle:fmt.headingDate(today), floating:fab('Mieszam','mix','plus'), body:`<div class="stack">
+  return {title:'Kurnik', subtitle:fmt.headingDate(today), body:`<div class="stack">
     ${currentCard(ctx, true)}
-    ${lowBanner(ctx, true)}
-    ${negatives.length ? banner('Sprawdź stan', negatives.map(row => html(row.ingredient.name)).join(', '),
-      link('Korekta stanu', negativeAction), true) : ''}
     <section class="stack tight home-stock"><div class="section-head"><h2>Magazyn w skrócie</h2>${link('Cały magazyn', 'stock')}</div>
-      ${smallStock.length ? stockRows(smallStock, ctx, true) : empty('Brak prognozy zapasu.')}</section>
+      ${smallStock.length ? stockRows(smallStock, ctx, true) : empty('Nie ma składników w magazynie.')}</section>
     <section class="card home-flock">${row({name:'Stado', sub:html(flockText(derived.flock)), symbol:'flock', route:'flock'})}</section>
     ${due ? banner('Zapisz kopię zapasową', 'Od ostatniej kopii minęło ponad 30 dni.', link('Ustawienia', 'settings/start'), true) : ''}
     </div>`};
@@ -170,8 +157,7 @@ export function batchView(ctx, id) {
 }
 
 export function warehouse(ctx) {
-  return {title:'Magazyn', floating:fab('Zakup','movement/purchase','plus'), body:`<div class="stack">
-    ${lowBanner(ctx, false)}
+  return {title:'Magazyn', floating:fab('Dodaj','movement/add','plus'), body:`<div class="stack">
     <section class="stack tight"><div class="section-head"><h2>Składniki</h2>${link('Dodaj składnik','ingredient-form','', 'plus')}</div>
     ${ctx.derived.stocks.length ? stockRows(ctx.derived.stocks, ctx) : empty('Nie dodano jeszcze żadnego składnika.')}</section></div>`};
 }
@@ -182,14 +168,14 @@ const formatRate = (price, ingredient) => fmt.money(price.cents * 1000 / price.g
 export function ingredientView(ctx, id) {
   const item = ctx.derived.stocks.find(entry => entry.ingredient.id === id);
   if (!item) return missing('stock');
-  const {ingredient, grams, outlook} = item;
+  const {ingredient, grams, known, outlook} = item;
   const events = live(ctx.data.ingredientEvents).filter(row => row.ingredientId === id).sort(latestFirst);
   return {title:ingredient.name, parent:'stock', body:`<div class="stack"><section class="card stack tight">
-    <h2>Stan wyliczony</h2><p class="display">${fmt.quantity(showAmount(grams, ingredient), ingredient.unit)}</p>
-    ${grams < 0 ? warning('Sprawdź stan') : ''}
-    ${forecast(outlook, ctx.derived.settings.threshold, ctx.today)}
+    <h2>Stan wyliczony</h2><p class="display"> ${known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
+     ${known && grams < 0 ? warning('Sprawdź stan') : ''}
+    ${known ? forecast(outlook,ctx.derived.settings.threshold,ctx.today) : ''}
     ${ingredient.price ? '<p><small>Ostatnia cena</small> ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
-    </section><div class="actions">${link('Zakup','movement/purchase/' + id,'tonal', 'plus')}
+    </section><div class="actions">${link('Dodaj','movement/add/' + id,'tonal','plus')}
       ${link('Korekta stanu','movement/correction/' + id,'tonal')}
       ${link('Inne pobranie','movement/withdrawal/' + id,'tonal')}
       ${link('Edytuj składnik','ingredient-form/' + id,'','edit')}</div>
@@ -203,31 +189,83 @@ export function ingredientView(ctx, id) {
     }).join('') + '</div>' : empty('Nie ma jeszcze ruchów magazynowych.')}</section></div>`};
 }
 
+function newLayingStatus(cohort, state, today) {
+  return state.count > 0 && state.status === 'young' && cohort.expectedStart && cohort.expectedStart <= today;
+}
+
 export function flockView(ctx) {
   const cohorts = live(ctx.data.cohorts).sort(latestFirst);
-  return {title:'Stado', floating:fab('Dodaj rocznik','cohort-form','plus'), body:`<div class="stack">
-    <section class="card card--strong stack tight"><h2>Razem</h2><p class="display">${fmt.birds(ctx.derived.flock.total)}</p>
-      <p>${fmt.hens(ctx.derived.flock.hens)} · ${fmt.roosters(ctx.derived.flock.roosters)}</p></section>
-    <section class="stack tight"><h2>Roczniki</h2>${cohorts.length ? '<div class="list">' + cohorts.map(cohort =>
-      row({name:cohort.name, symbol:'flock', sub:fmt.age(cohortAge(cohort,ctx.today)) +
-        (cohort.mark ? ' · ' + html(cohort.mark) : ''), value:fmt.number(cohortCount(cohort,ctx.data.cohortChanges,ctx.today)) + ' szt.',
-        route:'cohort/' + cohort.id})).join('') + '</div>' : empty('Nie ma jeszcze roczników.',link('Dodaj rocznik','cohort-form','tonal'))}</section></div>`};
+  const {flock} = ctx.derived;
+  return {title:'Stado', floating:fab('Nowe ptaki','flock-add','plus'), body:`<div class="stack">
+    <section class="card card--strong stack tight"><h2>Razem</h2><p class="display">${fmt.birds(flock.total)}</p>
+      ${details([['Nioski',fmt.number(flock.laying)],['Młode kury',fmt.number(flock.young)],['Koguty',fmt.number(flock.roosters)],
+        ...(flock.retired ? [['Wycofane',fmt.number(flock.retired)]] : []),
+        ...(flock.unknown ? [['Status do wpisania',fmt.number(flock.unknown)]] : [])])}</section>
+    <section class="stack tight"><h2>Roczniki</h2>${cohorts.length ? '<div class="list">' + cohorts.map(cohort => {
+      const state = cohortState(cohort,ctx.data.cohortChanges,ctx.today);
+      const due = newLayingStatus(cohort,state,ctx.today);
+      const sub = [state.status ? fmt.cohortStatuses[state.status] : cohort.category === 'hens' ? 'Status do wpisania' : 'Koguty',
+        fmt.age(cohortAge(cohort,ctx.today)),cohort.mark ? html(cohort.mark) : ''];
+      if (state.status === 'young' && cohort.expectedStart) {
+        sub.push(due ? warning('Sprawdź start nieśności') : 'Przewidywany start ' + fmt.fullDate(cohort.expectedStart));
+      }
+      return row({name:cohort.name,symbol:'flock',sub:sub.filter(Boolean).join(' · '),
+        value:fmt.number(state.count) + ' szt.',route:'cohort/' + cohort.id});
+    }).join('') + '</div>' : empty('Nie ma jeszcze roczników.',link('Dodaj rocznik','cohort-form','tonal'))}</section></div>`};
+}
+
+export function flockAdd(ctx) {
+  const cohorts = live(ctx.data.cohorts).sort(latestFirst);
+  return {title:'Nowe ptaki',parent:'flock',body:`<div class="stack">
+    <div>${link('Nowy rocznik','cohort-form','tonal','plus')}</div>
+    ${cohorts.length ? '<section class="stack tight"><h2>Dodaj do istniejącego rocznika</h2><div class="list">' +
+      cohorts.map(cohort => row({name:cohort.name,symbol:'flock',sub:html(cohort.mark),route:'change/' + cohort.id + '/add'})).join('') +
+      '</div></section>' : ''}</div>`};
 }
 
 export function cohortView(ctx, id) {
-  const cohort = find(ctx.data, 'cohorts', id);
+  const cohort = find(ctx.data,'cohorts',id);
   if (!cohort) return missing('flock');
-  const history = live(ctx.data.cohortChanges).filter(change => change.cohortId === id).sort(latestFirst);
-  return {title:cohort.name, parent:'flock', body:`<div class="stack"><section class="card stack tight">
-    <h2>${cohort.category === 'hens' ? 'Kury' : 'Koguty'}</h2>
-    <p class="display">${fmt.number(cohortCount(cohort, ctx.data.cohortChanges, ctx.today))} szt.</p>
-    ${details([[cohort.dateKind === 'purchase' ? 'Data zakupu' : 'Data wyklucia', fmt.fullDate(cohort.date)],
-      ['Wiek', fmt.age(cohortAge(cohort, ctx.today))], ...(cohort.mark ? [['Oznaczenie',html(cohort.mark)]] : [])])}
+  const history = cohortEvents(cohort,ctx.data.cohortChanges,ctx.today).reverse();
+  const state = cohortState(cohort,ctx.data.cohortChanges,ctx.today);
+  const isHen = cohort.category === 'hens';
+  const dateLabel = {purchase:'Data zakupu',hatch:'Data wyklucia',initial:'Data stanu początkowego'};
+  const layingDateKnown = state.layingSince && (state.status !== 'retired' || state.retiredSince);
+  const layingYear = layingDateKnown ? Math.floor(cohortAge({date:state.layingSince,dateKind:'hatch'},
+    state.retiredSince ?? ctx.today).months / 12) + 1 : null;
+  const due = newLayingStatus(cohort,state,ctx.today);
+  const eventRows = history.map(event => {
+    const kind = flockEventKind(event);
+    const context = kind === 'loss' ? fmt.lossReasons[event.reason] : kind === 'add' ? fmt.cohortOrigins[event.origin] : '';
+    const count = kind === 'status' ? fmt.cohortStatuses[event.status] :
+      (kind === 'add' ? '+' : kind === 'loss' ? '−' : '') + fmt.number(event.count) + ' szt.';
+    return row({name:fmt.flockEvents[kind],symbol:'flock',
+      sub:[fmt.fullDate(event.date),context,html(event.notes)].filter(Boolean).join(' · '),
+      value:count,route:'change/' + id + '/' + kind + '/' + event.id});
+  }).join('');
+  const origin = fmt.cohortOrigins[cohortOrigin(cohort)];
+  return {title:cohort.name,parent:'flock',body:`<div class="stack">
+    <section class="card stack tight"><h2>${isHen ? 'Kury' : 'Koguty'}</h2>
+    <p class="display">${fmt.number(state.count)} szt.</p>
+    ${details([[dateLabel[cohort.dateKind],fmt.fullDate(cohort.date)],['Pochodzenie',origin],
+      ['Wiek',fmt.age(cohortAge(cohort,ctx.today))],
+      ...(cohort.mark ? [['Oznaczenie',html(cohort.mark)]] : []),
+      ...(isHen ? [['Status',fmt.cohortStatuses[state.status] ?? 'Nieustalony']] : []),
+      ...(state.status === 'young' && cohort.expectedStart ? [['Przewidywany start nieśności',fmt.fullDate(cohort.expectedStart)]] : []),
+      ...(layingYear ? [[state.status === 'retired' ? 'Ostatni odnotowany rok nieśności' : 'Rok nieśności',
+        fmt.number(layingYear) + '.']] : [])])}
     ${cohort.notes ? '<p class="notes">' + html(cohort.notes) + '</p>' : ''}</section>
-    <div class="actions">${link('Zmień liczbę', 'change/' + id, 'tonal')}${link('Edytuj rocznik', 'cohort-form/' + id, '', 'edit')}</div>
-    <section class="stack tight"><h2>Historia zmian liczby</h2>${history.length ? '<div class="list">' + history.map(change =>
-      row({name:fmt.listDate(change.date,ctx.today), symbol:'flock', sub:html(change.notes), value:fmt.number(change.count) + ' szt.',
-        route:'change/' + id + '/' + change.id})).join('') + '</div>' : empty('Nie ma jeszcze zmian liczby ptaków.')}</section></div>`};
+    ${due ? banner('Sprawdź start nieśności','Minęła przewidywana data startu nieśności.',
+      link('Zmień status','change/' + id + '/status')) : ''}
+    <div class="actions">${link('Nowe ptaki','change/' + id + '/add','tonal','plus')}${link('Ubytek','change/' + id + '/loss','tonal')}
+      ${!due && isHen && state.status !== 'retired' ? link('Zmień status','change/' + id + '/status','tonal') : ''}
+      ${link('Korekta liczby','change/' + id + '/correction','tonal')}
+      ${link('Edytuj rocznik','cohort-form/' + id,'','edit')}</div>
+    <section class="stack tight"><h2>Historia zdarzeń</h2><div class="list">${eventRows}
+      ${row({name:cohortOrigin(cohort) === 'initial' ? 'Stan początkowy' : 'Nowy rocznik',symbol:'flock',
+        sub:[fmt.fullDate(cohort.date),cohortOrigin(cohort) === 'initial' ? '' : origin].filter(Boolean).join(' · '),
+        value:fmt.number(cohort.count) + ' szt.',route:'cohort-form/' + id})}
+    </div></section></div>`};
 }
 
 export function missing(parent = 'start') {

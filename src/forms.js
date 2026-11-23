@@ -1,15 +1,16 @@
-import {addDays, batchResult, ingredientMass, recipeComposition, scaleRecipe, stock} from './calc/index.js';
-import {live} from './db.js';
+import {addDays, batchResult, cohortEvents, cohortOrigin, cohortState, flockEventKind, ingredientMass, recipeComposition, scaleRecipe, stock, validCohortHistory} from './calc/index.js';
+import {live,record} from './db.js';
 import {find, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
 import {missing} from './views.js';
 import {button, changeRow, dateField, details, empty, field, FieldError, form, html, iconButton,
-  keypad, keypadKeys, link, readDate, readName, readNumber, select, showFormError, textarea} from '../ui/components.js';
+  keypad, keypadKeys, link, readDate, readName, readNumber, select, textarea} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 
 const amountLimit = 10000000;
 const amountOptions = {min:.001,max:amountLimit};
-const movementLabels = {purchase:'Zakup', correction:'Korekta stanu', withdrawal:'Inne pobranie'};
+const movementLabels = {add:'Dodaj do magazynu', addition:'Dodanie zapasu', purchase:'Zakup',
+  correction:'Korekta stanu', withdrawal:'Inne pobranie'};
 const value = name => document.getElementById(name).value;
 const dateInput = (ctx, name, label, date = ctx.today, min) => dateField(name,label,date,min,ctx.today);
 const asInput = (number, digits) => fmt.editable(number, digits);
@@ -23,6 +24,26 @@ function physicalMass(amount, ingredient, fieldName) {
   catch (error) { throw new FieldError(fieldName,error.message); }
 }
 
+function ingredientFields(prefix, item) {
+  return `${field(prefix + 'name','Nazwa',item?.name,{length:80})}
+    ${select(prefix + 'unit','Jednostka',[['kg','kg'],['l','l']],item?.unit ?? 'kg')}
+    <div id="${prefix}density-wrap"${item?.unit !== 'l' ? ' hidden' : ''}>
+      ${field(prefix + 'density','Gęstość (kg/l)',asInput(item?.density),{mode:'decimal'})}</div>`;
+}
+
+function ingredientValues(prefix, ingredients, id, lockedUnit) {
+  const name = readName(value(prefix + 'name'),prefix + 'name');
+  if (ingredients.some(row => row.id !== id && normalize(row.name) === normalize(name))) {
+    throw new FieldError(prefix + 'name','Składnik o takiej nazwie już istnieje.');
+  }
+  const unit = value(prefix + 'unit');
+  if (lockedUnit && unit !== lockedUnit) {
+    throw new FieldError(prefix + 'unit','Jednostka jest powiązana z istniejącymi wpisami.');
+  }
+  const density = unit === 'l' ? readNumber(value(prefix + 'density'),prefix + 'density',{min:.001,max:100}) : null;
+  return {name,unit,density};
+}
+
 export function ingredientForm(ctx, id) {
   const old = get(ctx,'ingredients',id);
   if (id && !old) return missing('stock');
@@ -31,21 +52,13 @@ export function ingredientForm(ctx, id) {
     ctx.data.ingredientEvents.some(row => row.ingredientId === id));
   return {
     title:old ? 'Edytuj składnik' : 'Dodaj składnik', parent, form:true,
-    body:form(`${field('name','Nazwa',old?.name,{length:80})}
-      ${select('unit','Jednostka',[['kg','kg'],['l','l']],old?.unit ?? 'kg')}
-      <div id="density-wrap"${old?.unit !== 'l' ? ' hidden' : ''}>${field('density','Gęstość (kg/l)',asInput(old?.density),{mode:'decimal'})}</div>
+    body:form(`${ingredientFields('',old)}
       ${referenced ? '<p class="muted">Jednostka jest powiązana z zapisanymi wpisami.</p>' : ''}`, 'Zapisz', Boolean(old)),
     change(target) {
       if (target.id === 'unit') document.getElementById('density-wrap').hidden = target.value !== 'l';
     },
     submit() {
-      const name = readName(value('name'));
-      if (ctx.derived.ingredients.some(row => row.id !== id && normalize(row.name) === normalize(name))) {
-        throw new FieldError('name','Składnik o takiej nazwie już istnieje.');
-      }
-      const unit = value('unit');
-      if (referenced && unit !== old.unit) throw new FieldError('unit','Jednostka jest powiązana z istniejącymi wpisami.');
-      const density = unit === 'l' ? readNumber(value('density'),'density',{min:.001,max:100}) : null;
+      const {name,unit,density} = ingredientValues('',ctx.derived.ingredients,id,referenced ? old.unit : null);
       if (old && density !== old.density) {
         for (const recipe of ctx.derived.recipes) {
           const item = recipe.items.find(row => row.ingredientId === id);
@@ -70,22 +83,26 @@ export function ingredientForm(ctx, id) {
 export function recipeForm(ctx, id) {
   const old = get(ctx,'recipes',id);
   if (id && !old) return missing('feed');
-  if (!ctx.derived.ingredients.length) return {title:'Dodaj recepturę',parent:'feed',
-    body:empty('Dodaj składnik, aby utworzyć recepturę.',link('Dodaj składnik','ingredient-form','tonal'))};
   const parent = old ? 'recipe/' + id : 'feed';
   const ingredients = ctx.derived.ingredients.slice().sort((a,b) => a.name.localeCompare(b.name,'pl'));
-  const options = [['','Wybierz'],...ingredients.map(row => [row.id,row.name + ' (' + row.unit + ')'])];
+  const drafted = [];
+  const optionLabel = row => row.name + ' (' + row.unit + ')';
+  const options = () => [['','Wybierz'],...ingredients.map(row => [row.id,optionLabel(row)])];
   let next = 0;
   const readLine = (ingredientId = '', amount) => {
     const index = next++;
-    return `<div class="recipe-line" data-recipe-line="${index}">${select('ingredient-' + index,'Składnik',options,ingredientId)}
+    return `<div class="recipe-line" data-recipe-line="${index}">${select('ingredient-' + index,'Składnik',options(),ingredientId)}
       ${field('amount-' + index,'Ilość',asInput(amount),{mode:'none',length:17})}
       ${iconButton('Usuń pozycję','del','drop:' + index)}<div class="recipe-keypad" hidden>${keypadKeys('amount-' + index)}</div></div>`;
   };
   const items = old ? old.items.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
   return {title:old ? 'Edytuj recepturę' : 'Dodaj recepturę',parent,form:true,
     body:form(`${field('name','Nazwa',old?.name,{length:80})}<fieldset class="stack tight"><legend>Składniki</legend>
-      <div class="stack tight" id="recipe-lines">${items}</div><div>${button('Dodaj składnik','add-line','tonal','plus')}</div></fieldset>
+      <div class="stack tight" id="recipe-lines">${items}</div><div class="actions">
+      ${button('Dodaj pozycję','add-line','tonal','plus')}${button('Utwórz składnik','new-ingredient')}</div></fieldset>
+      <fieldset class="card stack" id="new-ingredient" hidden><legend>Nowy składnik</legend>
+        ${ingredientFields('new-',null)}<div class="actions">${button('Dodaj do receptury','use-ingredient','tonal')}
+        ${button('Anuluj','cancel-ingredient')}</div></fieldset>
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`, 'Zapisz', Boolean(old)),
     focus(target) {
       const row = target.closest('[data-recipe-line]');
@@ -94,6 +111,9 @@ export function recipeForm(ctx, id) {
       document.querySelectorAll('.recipe-keypad').forEach(element => {
         element.hidden = element !== keyboard || !target.id.startsWith('amount-');
       });
+    },
+    change(target) {
+      if (target.id === 'new-unit') document.getElementById('new-density-wrap').hidden = target.value !== 'l';
     },
     submit() {
       const name = readName(value('name'));
@@ -110,10 +130,43 @@ export function recipeForm(ctx, id) {
         return {ingredientId,amount:Math.round(amount * 1000)};
       });
       if (!written.length) throw new FieldError('','Dodaj co najmniej jeden składnik.');
-      return ctx.commit(data => put(data,'recipes',old,{name,items:written,notes:text('notes'),
-        current:old?.current ?? !live(data.recipes).length}),parent);
+      if (!document.getElementById('new-ingredient').hidden) {
+        throw new FieldError('new-name','Dodaj składnik do receptury albo anuluj jego tworzenie.');
+      }
+      return ctx.commit(data => {
+        const used = new Set(written.map(item => item.ingredientId));
+        for (const ingredient of drafted) {
+          if (used.has(ingredient.id)) put(data,'ingredients',null,ingredient);
+        }
+        put(data,'recipes',old,{name,items:written,notes:text('notes'),current:old?.current ?? !live(data.recipes).length});
+      },parent);
     },
     action(action) {
+      const editor = document.getElementById('new-ingredient');
+      if (action === 'new-ingredient') {
+        editor.hidden = false;
+        document.getElementById('new-name').focus();
+      }
+      if (action === 'cancel-ingredient' || action === 'use-ingredient') {
+        if (action === 'use-ingredient') {
+          const ingredient = {id:crypto.randomUUID(),...ingredientValues('new-',ingredients),price:null};
+          drafted.push(ingredient);
+          ingredients.push(ingredient);
+          const selectors = [...document.querySelectorAll('#recipe-lines select')];
+          const blank = selectors.find(item => !item.value);
+          for (const item of selectors) item.add(new Option(optionLabel(ingredient),ingredient.id));
+          if (blank) blank.value = ingredient.id;
+          else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
+          const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
+          document.getElementById('amount-' + index).focus();
+          ctx.dirty();
+        }
+        editor.hidden = true;
+        document.getElementById('new-name').value = '';
+        document.getElementById('new-unit').value = 'kg';
+        document.getElementById('new-density').value = '';
+        document.getElementById('new-density-wrap').hidden = true;
+      }
       if (action === 'add-line') {
         document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine());
         document.getElementById('ingredient-' + (next - 1)).focus();
@@ -128,7 +181,7 @@ export function recipeForm(ctx, id) {
 }
 
 export function movementForm(ctx, type, ingredientId, eventId) {
-  if (!movementLabels[type]) return missing('stock');
+  if (!Object.hasOwn(movementLabels,type)) return missing('stock');
   const old = get(ctx,'ingredientEvents',eventId);
   if (eventId && (!old || old.type !== type || old.ingredientId !== ingredientId)) return missing('stock');
   let ingredient = get(ctx,'ingredients',ingredientId) ?? ctx.derived.ingredients[0];
@@ -136,7 +189,9 @@ export function movementForm(ctx, type, ingredientId, eventId) {
   if (!ingredient) return {title:movementLabels[type],parent:'stock',
     body:empty('Najpierw dodaj składnik do magazynu.',link('Dodaj składnik','ingredient-form','tonal'))};
   const correction = type === 'correction';
+  const add = type === 'add';
   const purchase = type === 'purchase';
+  const canPrice = purchase || add;
   const selection = ctx.derived.ingredients.slice().sort((a,b) => a.name.localeCompare(b.name,'pl'));
   let date = old?.date ?? ctx.today;
   const currentStock = () => {
@@ -179,8 +234,9 @@ export function movementForm(ctx, type, ingredientId, eventId) {
       ${correction ? '<p>Stan wyliczony <strong id="calculated-stock">' + signed(currentStock()).replace(/^\+/,'') + '</strong></p>' : ''}
       ${keypad('quantity',correction ? 'Jest faktycznie' : 'Ilość',asInput(initialAmount),ingredient.unit)}
       ${correction ? '<p id="difference" role="status">' + (old ? 'Różnica ' + signed(old.grams) : '') + '</p>' : ''}
-      ${purchase ? priceBlock(ingredient,defaultMode) : ''}
-      ${type === 'withdrawal' ? textarea('notes','Uwagi (opcjonalnie)',old?.notes) : ''}`,'Zapisz',Boolean(old)),
+      ${add ? select('addition-kind','Skąd pochodzi składnik?',[['addition','Własny lub otrzymany'],['purchase','Zakup']],'addition') : ''}
+      ${canPrice ? `<div id="purchase-fields"${purchase ? '' : ' hidden'}>${priceBlock(ingredient,defaultMode)}</div>` : ''}
+      ${!correction ? textarea('notes','Uwagi (opcjonalnie)',old?.notes) : ''}`,'Zapisz',Boolean(old)),
     change(target) {
       if (target.id === 'date' && target.value) {
         date = target.value;
@@ -190,9 +246,10 @@ export function movementForm(ctx, type, ingredientId, eventId) {
       if (target.id === 'ingredient') {
         ingredient = get(ctx,'ingredients',target.value);
         document.querySelector('[data-unit-for="quantity"]').textContent = ingredient.unit;
-        if (purchase) document.getElementById('prices').outerHTML = priceBlock(ingredient,'per-kg');
+        if (canPrice) document.getElementById('prices').outerHTML = priceBlock(ingredient,'per-kg');
         updateDifference();
       }
+      if (target.id === 'addition-kind') document.getElementById('purchase-fields').hidden = target.value !== 'purchase';
       if (target.id === 'price-mode') {
         const priceField = document.getElementById('price');
         if (old || target.value !== 'total') {
@@ -207,7 +264,8 @@ export function movementForm(ctx, type, ingredientId, eventId) {
       const grams = getQuantity();
       let price = null;
       let priceMode = null;
-      if (purchase) {
+      const kind = add ? value('addition-kind') : type;
+      if (kind === 'purchase') {
         priceMode = value('price-mode');
         const original = initialPrice(ingredient);
         const defaultPrice = priceMode === 'total' && !old ? null : shownPrice(original,priceMode,ingredient);
@@ -220,9 +278,9 @@ export function movementForm(ctx, type, ingredientId, eventId) {
             : priceMode === 'per-litre' ? Math.round(ingredient.density * 1000) : 1000};
         }
       }
-      const balance = correction ? correctionDelta(grams) : purchase ? grams : -grams;
+      const balance = correction ? correctionDelta(grams) : kind === 'withdrawal' ? -grams : grams;
       return ctx.commit(data => put(data,'ingredientEvents',old,{ingredientId:ingredient.id,
-        type,date:when,grams:balance,measured:correction ? grams : null,price,priceMode,batchId:null,notes:text('notes')}),parent);
+        type:kind,date:when,grams:balance,measured:correction ? grams : null,price,priceMode,batchId:null,notes:text('notes')}),parent);
     },
     action(action) {
       if (action === 'date') {
@@ -243,8 +301,7 @@ export function mixForm(ctx, name, id, origin) {
   const parent = editing ? 'batch/' + id : (origin === 'start' ? 'start' : get(ctx,'recipes',id) ? 'recipe/' + id : 'feed');
   if (!editing && !recipe) return {title:'Mieszam',parent,
     body:empty('Najpierw dodaj recepturę.',link('Dodaj recepturę','recipe-form','tonal'))};
-  let target = original?.mass ?? 50000;
-  let massMode = '50';
+  let target = 50000;
   let date = original?.date ?? ctx.today;
   let start = original?.start ?? ctx.today;
   let items = original ? structuredClone(original.items) : [];
@@ -259,8 +316,8 @@ export function mixForm(ctx, name, id, origin) {
   const batchMass = () => items.reduce((sum, item) => sum + item.grams,0);
 
   function chips() {
-    return [['50','50 kg'],['100','100 kg'],['custom','Inna']].map(([key,label]) =>
-      `<button type="button" class="chip" aria-pressed="${key === massMode}" data-action="mass:${key}">${key === massMode ? icon('check') : ''}${label}</button>`).join('');
+    return [50000,100000].map(grams =>
+      `<button type="button" class="chip" aria-pressed="${grams === target}" data-action="mass:${grams}">${grams === target ? icon('check') : ''}${fmt.mass(grams)}</button>`).join('');
   }
 
   function recipeChips() {
@@ -278,8 +335,8 @@ export function mixForm(ctx, name, id, origin) {
     return items.map((item,index) => `<div class="checklist-row">
       ${editing ? '<span class="grow">' + html(item.name) + '</span>' :
         `<label for="check-${index}"><input id="check-${index}" type="checkbox" data-check="${index}" ${selected.has(index) ? 'checked' : ''}><span>${html(item.name)}</span></label>`}
-      <button class="button" type="button" data-action="quantity:${index}" aria-label="Zmień ilość: ${html(item.name)}, ${fmt.quantity(showAmount(item.grams,item),item.unit,true)}">
-        ${fmt.quantity(showAmount(item.grams,item),item.unit,true)}${icon('edit')}</button></div>${editedIndex === index ? itemEditor(index) : ''}`).join('');
+      <button class="button" type="button" data-action="quantity:${index}" aria-label="Zmień ilość: ${html(item.name)}, ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}">
+        ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}${icon('edit')}</button></div>${editedIndex === index ? itemEditor(index) : ''}`).join('');
   }
 
   function dateSection() {
@@ -295,7 +352,7 @@ export function mixForm(ctx, name, id, origin) {
       document.getElementById('recipe-chips').innerHTML = recipeChips();
     }
     document.getElementById('checklist').innerHTML = checkList();
-    document.getElementById('actual-mass').textContent = fmt.mass(batchMass(),true);
+    document.getElementById('actual-mass').textContent = fmt.mixingQuantity(batchMass()/1000);
   }
 
   function applyQuantity() {
@@ -314,21 +371,11 @@ export function mixForm(ctx, name, id, origin) {
     document.querySelector('[data-action="quantity:' + index + '"]').focus({preventScroll:true});
   }
 
-  function applyTarget() {
-    const custom = document.getElementById('custom-target');
-    if (editing || custom.hidden) return;
-    const chosen = Math.round(readNumber(value('target'),'target',amountOptions) * 1000);
-    if (chosen !== target) { target = chosen; editedIndex = null; scale(); renderMix(); }
-    custom.hidden = true;
-  }
-
   return {title:editing ? 'Edytuj partię' : 'Mieszam',subtitle:original?.recipeName,parent,form:true,
     body:form(`${editing ? '' : `<fieldset><legend>Receptura</legend><div class="actions" id="recipe-chips">${recipeChips()}</div></fieldset>
-      <fieldset><legend>Masa partii</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>
-      <div id="custom-target" class="card stack" hidden>${keypad('target','Własna masa','','kg')}
-      <div>${button('Przelicz składniki','apply-mass','tonal')}</div></div>`}
+      <fieldset><legend>Masa partii</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>`}
       <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend><div id="checklist">${checkList()}</div></fieldset>
-      <div class="value-row"><span>Masa mieszanki</span><strong id="actual-mass">${fmt.mass(batchMass(),true)}</strong></div>
+      <div class="value-row"><span>Masa mieszanki</span><strong id="actual-mass">${fmt.mixingQuantity(batchMass()/1000)}</strong></div>
       <div id="date-rows">${dateSection()}</div>`,editing ? 'Zapisz' : 'Zatwierdź partię',editing),
     change(element) {
       if (element.dataset.check !== undefined) {
@@ -350,7 +397,6 @@ export function mixForm(ctx, name, id, origin) {
     },
     async submit() {
       applyQuantity();
-      applyTarget();
       const mixed = readDate(value('mixed'),'mixed','1900-01-01',ctx.today);
       const begins = readDate(value('start'),'start',mixed,original?.end ? addDays(original.end,-1) : '9999-12-30');
       if (items.some(row => row.grams <= 0)) throw new FieldError('','Zwiększ masę partii albo podaj ilości od 1 g dla każdego składnika.');
@@ -374,17 +420,16 @@ export function mixForm(ctx, name, id, origin) {
     },
     action(action) {
       if (action.startsWith('mass:')) {
-        const mode = action.slice(5);
-        if (editedIndex !== null) applyQuantity();
-        const custom = document.getElementById('custom-target');
-        if (mode !== massMode) ctx.dirty();
-        massMode = mode;
-        custom.hidden = mode !== 'custom';
-        if (mode !== 'custom') { target = Number(mode) * 1000; scale(); }
-        renderMix();
-        if (mode === 'custom') document.getElementById('target').focus();
+        const grams = Number(action.slice(5));
+        if (grams !== target) {
+          target = grams;
+          editedIndex = null;
+          scale();
+          renderMix();
+          document.querySelector('[data-action="' + action + '"]').focus({preventScroll:true});
+          ctx.dirty();
+        }
       }
-      if (action === 'apply-mass') { applyTarget(); ctx.dirty(); }
       if (action.startsWith('choose:')) {
         const nextRecipe = get(ctx,'recipes',action.slice(7));
         if (recipe.id !== nextRecipe.id) {
@@ -446,57 +491,134 @@ export function finishForm(ctx, id, origin) {
     }};
 }
 
+const maxBirds = 1000000;
+const flockOptions = map => Object.entries(map);
+const statusOptions = [['','Nieustalony'],...flockOptions(fmt.cohortStatuses)];
+
 export function cohortForm(ctx,id) {
   const cohort = get(ctx,'cohorts',id);
   if (id && !cohort) return missing('flock');
   const parent = cohort ? 'cohort/' + id : 'flock';
-  const dateKind = cohort?.dateKind ?? 'hatch';
-  const firstChange = live(ctx.data.cohortChanges).filter(row => row.cohortId === id).sort((a,b) => a.date.localeCompare(b.date))[0];
+  const origin = cohort ? cohortOrigin(cohort) : 'initial';
+  const dateKind = cohort?.dateKind ?? 'initial';
+  const history = cohort ? cohortEvents(cohort,ctx.data.cohortChanges) : [];
+  const lastAllowedDate = history[0]?.date ?? ctx.today;
+
+  function updateFields(target) {
+    const source = value('origin');
+    const category = value('category');
+    const dateSelect = document.getElementById('date-kind');
+    if (target?.id === 'origin') {
+      if (source === 'purchase') dateSelect.value = 'purchase';
+      if (source === 'rearing') dateSelect.value = 'hatch';
+      if (source === 'initial') dateSelect.value = 'initial';
+    }
+    dateSelect.closest('.field').hidden = source !== 'initial';
+    const when = dateSelect.value;
+    const dateLabel = {purchase:'Data zakupu',hatch:'Data wyklucia',initial:'Data stanu początkowego'};
+    document.querySelector('label[for="date"]').textContent = dateLabel[when];
+    document.getElementById('weeks-wrap').hidden = when !== 'purchase';
+    document.getElementById('hen-fields').hidden = category !== 'hens';
+    const status = value('initial-status');
+    document.getElementById('expected-wrap').hidden = status !== 'young';
+    document.getElementById('laying-wrap').hidden = !['laying','retired'].includes(status);
+  }
+
   return {title:cohort ? 'Edytuj rocznik' : 'Dodaj rocznik',parent,form:true,
     body:form(`${field('name','Nazwa',cohort?.name,{length:80})}
       <div class="form-grid">${select('category','Kategoria',[['hens','Kury'],['roosters','Koguty']],cohort?.category ?? 'hens')}
-      ${select('date-kind','Rodzaj daty',[['hatch','Wyklucie'],['purchase','Zakup']],dateKind)}
-      ${dateField('date','Data',cohort?.date ?? ctx.today,'1900-01-01',firstChange?.date ?? ctx.today)}</div>
-      <div id="weeks-wrap"${dateKind === 'hatch' ? ' hidden' : ''}>${field('weeks','Wiek przy zakupie w tygodniach (opcjonalnie)',asInput(cohort?.weeks),{mode:'numeric'})}</div>
+      ${select('origin','Pochodzenie',flockOptions(fmt.cohortOrigins),origin)}
+      ${select('date-kind','Rodzaj daty',[['initial','Stan początkowy'],['hatch','Wyklucie'],['purchase','Zakup']],dateKind)}
+      ${dateField('date','Data',cohort?.date ?? ctx.today,'1900-01-01',lastAllowedDate)}</div>
+      <div id="weeks-wrap">${field('weeks','Wiek przy zakupie w tygodniach (opcjonalnie)',asInput(cohort?.weeks),{mode:'numeric'})}</div>
+      <div id="hen-fields" class="stack tight">
+        ${select('initial-status',cohort ? 'Status przy utworzeniu rocznika' : 'Status kur',statusOptions,cohort ? cohort.status ?? '' : 'young')}
+        <div id="expected-wrap">${dateField('expected-start','Przewidywany start nieśności (opcjonalnie)',cohort?.expectedStart ?? '')}</div>
+        <div id="laying-wrap">${dateField('laying-since','Faktyczny start nieśności, jeśli znany',cohort?.layingSince ?? '', '1900-01-01',ctx.today)}</div>
+      </div>
       ${keypad('count',cohort ? 'Początkowa liczba' : 'Liczba ptaków',asInput(cohort?.count),'szt.',false)}
       ${field('mark','Oznaczenie (opcjonalnie)',cohort?.mark,{length:80})}${textarea('notes','Uwagi (opcjonalnie)',cohort?.notes)}`,'Zapisz',Boolean(cohort)),
+    mount() { updateFields(); },
     change(target) {
-      if (target.id === 'date-kind') document.getElementById('weeks-wrap').hidden = target.value === 'hatch';
+      if (['category','origin','date-kind','initial-status'].includes(target.id)) updateFields(target);
     },
     submit() {
       const name = readName(value('name'));
       const category = value('category');
+      const origin = value('origin');
       const dateKind = value('date-kind');
-      const date = readDate(value('date'),'date','1900-01-01',firstChange?.date ?? ctx.today);
+      const date = readDate(value('date'),'date','1900-01-01',lastAllowedDate);
       const weeks = dateKind === 'purchase' ? readNumber(value('weeks'),'weeks',{optional:true,digits:0,max:5200}) : null;
-      const count = readNumber(value('count'),'count',{digits:0,max:1000000});
-      return ctx.commit(data => put(data,'cohorts',cohort,{name,category,dateKind,date,weeks,count,mark:text('mark'),notes:text('notes')}),parent);
+      const count = readNumber(value('count'),'count',{digits:0,max:maxBirds,min:origin === 'initial' ? 0 : 1});
+      const status = category === 'hens' ? value('initial-status') || null : null;
+      const expectedStart = category === 'hens' && !document.getElementById('expected-wrap').hidden && value('expected-start')
+        ? readDate(value('expected-start'),'expected-start',dateKind === 'hatch' ? date : '1900-01-01')
+        : status === 'young' ? null : category === 'hens' ? cohort?.expectedStart ?? null : null;
+      const layingSince = ['laying','retired'].includes(status) && value('laying-since')
+        ? readDate(value('laying-since'),'laying-since',dateKind === 'hatch' ? date : '1900-01-01',ctx.today) : null;
+      const fields = {name,category,origin,dateKind,date,weeks,count,status,expectedStart,layingSince,mark:text('mark'),notes:text('notes')};
+      if (cohort && !validCohortHistory({...cohort,...fields},history)) {
+        throw new FieldError('','Ta zmiana jest sprzeczna z historią rocznika. Sprawdź początkową liczbę i status.');
+      }
+      return ctx.commit(data => put(data,'cohorts',cohort,fields),parent);
     },
     action(action) {
       if (action !== 'delete') return;
       return ctx.commit(data => {
         remove(data,'cohorts',id);
-        for (const row of live(data.cohortChanges)) if (row.cohortId === id) row.deleted = true;
+        for (const event of history) remove(data,'cohortChanges',event.id);
       },'flock','Usunięto');
     }};
 }
 
-export function changeForm(ctx,id,changeId) {
+export function changeForm(ctx,id,kind = 'correction',changeId) {
   const cohort = get(ctx,'cohorts',id);
+  // Stare odnośniki do korekt zawierały identyfikator od razu po ID rocznika.
+  if (!Object.hasOwn(fmt.flockEvents,kind) && !changeId) {
+    changeId = kind;
+    kind = 'correction';
+  }
   const old = get(ctx,'cohortChanges',changeId);
-  if (!cohort || (changeId && (!old || old.cohortId !== id))) return missing('flock');
+  if (!cohort || !Object.hasOwn(fmt.flockEvents,kind) ||
+    (changeId && (!old || old.cohortId !== id || flockEventKind(old) !== kind))) return missing('flock');
+  if (kind === 'status' && cohort.category !== 'hens') return missing('cohort/' + id);
   const parent = 'cohort/' + id;
-  return {title: old ? 'Edytuj zmianę liczby' : 'Zmień liczbę',subtitle:cohort.name,parent,form:true,
+  const history = cohortEvents(cohort,ctx.data.cohortChanges);
+  const others = history.filter(event => event.id !== changeId);
+  const current = cohortState(cohort,ctx.data.cohortChanges,ctx.today);
+  const next = {young:'laying',laying:'retired'};
+  const countLabel = {add:'Liczba dodawanych ptaków',loss:'Liczba ptaków do odjęcia',correction:'Faktyczna liczba ptaków'};
+
+  return {title:fmt.flockEvents[kind],subtitle:cohort.name,parent,form:true,
     body:form(`${dateInput(ctx,'date','Data',old?.date,cohort.date)}
-      ${keypad('count','Nowa liczba',asInput(old?.count),'szt.',false)}
+      ${kind === 'status' ? select('new-status','Nowy status',flockOptions(fmt.cohortStatuses),
+        old?.status ?? next[current.status] ?? 'laying')
+        : keypad('count',countLabel[kind],asInput(old?.count),'szt.',false)}
+      ${kind === 'add' ? select('source','Pochodzenie nowych ptaków',[['purchase','Zakup'],['rearing','Odchów']],old?.origin ?? 'purchase') : ''}
+      ${kind === 'loss' ? select('reason','Powód',flockOptions(fmt.lossReasons),old?.reason ?? 'died') : ''}
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`,'Zapisz',Boolean(old)),
     submit() {
       const date = readDate(value('date'),'date',cohort.date,ctx.today);
-      const count = readNumber(value('count'),'count',{digits:0,max:1000000});
-      return ctx.commit(data => put(data,'cohortChanges',old,{cohortId:id,date,count,notes:text('notes')}),parent);
+      const fields = {cohortId:id,type:kind,date,notes:text('notes')};
+      if (kind === 'status') fields.status = value('new-status');
+      else fields.count = readNumber(value('count'),'count',{digits:0,max:maxBirds,min:kind === 'correction' ? 0 : 1});
+      if (kind === 'add') fields.origin = value('source');
+      if (kind === 'loss') fields.reason = value('reason');
+      const order = history.reduce((highest,event) => Math.max(highest,event.order ?? 0),0);
+      const entry = old ? {...old,...fields} : record({...fields,order:order + 1});
+      if (!validCohortHistory(cohort,[...others,entry])) {
+        const message = kind === 'status' ? 'Sprawdź kolejność statusów: młode, nioski, wycofane.' :
+          'Po tej zmianie liczba ptaków w historii wyszłaby poza dopuszczalny zakres.';
+        throw new FieldError(kind === 'status' ? 'new-status' : 'count',message);
+      }
+      return ctx.commit(data => put(data,'cohortChanges',old,entry),parent);
     },
     action(action) {
-      if (action === 'delete') return ctx.commit(data => remove(data,'cohortChanges',changeId),parent,'Usunięto');
+      if (action !== 'delete') return;
+      if (!validCohortHistory(cohort,others)) {
+        throw new FieldError('','Po usunięciu historia rocznika byłaby niespójna. Najpierw popraw powiązane zdarzenia.');
+      }
+      return ctx.commit(data => remove(data,'cohortChanges',changeId),parent,'Usunięto');
     }};
 }
 

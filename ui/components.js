@@ -32,7 +32,7 @@ export function forecast(value, threshold, today, compact = false) {
   const low = value.days < threshold;
   const bar = `<progress class="forecast-track" aria-label="Prognoza zapasu względem progu" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
   return `<span class="forecast ${low ? 'forecast--low' : ''}">
-    <span class="forecast-line"><strong>${low ? icon('warn') + ' ' : ''}≈ ${fmt.days(value.days)}</strong>${compact ? '' : `<span>≈ ${fmt.listDate(value.date, today)}</span>`}</span>
+    <span class="forecast-line"><strong>${low && !compact ? icon('warn') + ' ' : ''}≈ ${fmt.days(value.days)}</strong>${compact ? '' : `<span>≈ ${fmt.listDate(value.date, today)}</span>`}</span>
     ${bar}<small>prognoza${compact ? ' · ≈ ' + fmt.listDate(value.date, today) : ''}</small></span>`;
 }
 

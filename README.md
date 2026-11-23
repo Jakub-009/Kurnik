@@ -11,7 +11,7 @@ Pasza, magazyn składników i roczniki stada. Aplikacja działa w Chrome także 
 ## Pierwsze użycie
 
 - Aplikacja zaczyna z recepturą podstawową ze specyfikacji. W **Magazyn** otwórz składnik i użyj **Korekta stanu**, aby wpisać rzeczywisty zapas.
-- W **Stado** dodaj roczniki z rzeczywistą obsadą. Ceny z ostatniego wycenionego zakupu służą do wyliczenia kosztu receptury. Zakup oleju można wycenić także za litr.
+- W **Stado** dodaj roczniki z rzeczywistą obsadą. FAB „Dodaj” przyjmuje również własne i otrzymane zapasy. Ceny z ostatniego wycenionego zakupu służą do wyliczenia kosztu receptury. Zakup oleju można wycenić także za litr.
 - W **Ustawienia → Eksportuj kopię** pobierzesz plik JSON ze wszystkimi danymi. Zachowaj go poza przeglądarką. Import zastępuje dane po potwierdzeniu. Kopii JSON nie umieszczaj w publicznym repozytorium.
 
 ## Test lokalny i aktualizacje
@@ -22,7 +22,7 @@ Pasza, magazyn składników i roczniki stada. Aplikacja działa w Chrome także 
 
 ## Szczegóły obliczeń
 
-- Masy partii są zapisywane w pełnych gramach. Przy skalowaniu pojedyncze gramy rozdziela się według największych reszt, aby suma składników odpowiadała wybranej masie. Widok mieszania może pokazywać ułamki także powyżej 10 kg, np. 33,72 kg pszenicy.
+- Masy partii są zapisywane w pełnych gramach. Przy skalowaniu pojedyncze gramy rozdziela się według największych reszt, aby suma składników odpowiadała wybranej masie. Ekran mieszania podpowiada ilości dla 50 lub 100 kg. Zaokrągla wskazania do 100 g lub ml od 5 kg lub l oraz do 50 g lub ml poniżej tej wartości. Przy ilościach poniżej 50 g lub ml pokazuje drobniejsze wartości. Znak „≈” oznacza zaokrąglenie, a zapis partii zachowuje wyliczone ilości.
 - Przy zazębiających się zakończonych partiach sumuje się zjedzoną masę i liczy wspólne dni tylko raz. Gdy kilka partii jest otwartych, prognoza przypisuje zużycie od najwcześniej rozpoczętej.
 - Cena z zakupu zachowuje proporcję groszy do gramów, co pozwala liczyć ceny za litr i zakupy rozliczane łącznie bez wcześniejszego zaokrąglania ceny kilograma.
-- Obecny kod obejmuje oba etapy specyfikacji. Dwumiesięczna próba w gospodarstwie służy ocenie codziennej obsługi.
+- Stado rejestruje roczniki i zdarzenia. Wprowadzony przewidywany start nieśności uruchamia przypomnienie o zmianie statusu. Rok nieśności pojawia się przy znanej dacie faktycznego startu.

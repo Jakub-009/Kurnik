@@ -72,12 +72,16 @@ export function derive(data, today) {
   });
   const active = openStatus.find(row => row.remaining > 0) ?? openStatus.at(-1);
   const mixed = openStatus.reduce((sum, row) => sum + row.remaining, 0);
+  const received = new Set(live(data.ingredientEvents)
+    .filter(row => ['addition','purchase','correction'].includes(row.type)).map(row => row.ingredientId));
   const stocks = ingredients.map(ingredient => {
-    const grams = stock(data.ingredientEvents, ingredient.id);
+    const grams = stock(data.ingredientEvents,ingredient.id);
+    const known = received.has(ingredient.id);
     const share = composition?.items.find(item => item.ingredientId === ingredient.id)?.share;
-    return {ingredient, grams, outlook: supplyForecast(grams, share, daily, mixed, today)};
+    const outlook = known ? supplyForecast(grams,share,daily,mixed,today) : null;
+    return {ingredient,grams,known,outlook};
   }).sort((a,b) => (a.outlook?.days ?? Infinity) - (b.outlook?.days ?? Infinity) ||
-    a.ingredient.name.localeCompare(b.ingredient.name, 'pl'));
+    Number(b.known) - Number(a.known) || a.ingredient.name.localeCompare(b.ingredient.name,'pl'));
   const flock = flockCount(data.cohorts, data.cohortChanges, today);
   return {settings, ingredients, recipes, batches, current, composition, daily, active, openStatus, mixed, stocks, flock};
 }
@@ -90,6 +94,6 @@ export function batchStats(batch, data, derived, today) {
     days: age, consumed: open?.used ?? 0, daily: age > 0 ? (open?.used ?? 0) / age : null
   };
   const birds = result.daily == null ? 0 : averageFlock(data.cohorts, data.cohortChanges,
-    finished ? batch.start : today, finished ? batch.end : today);
+    batch.start, finished ? batch.end : today);
   return {...result, finished, birds, cost:mixtureCost(batch.items), remaining:finished ? batch.remaining : open?.remaining};
 }

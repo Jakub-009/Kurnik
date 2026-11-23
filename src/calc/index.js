@@ -97,22 +97,74 @@ export function supplyForecast(grams, share, daily, mixedGrams, today) {
   return {days, date: addDays(today, Math.min(Math.round(days), daysBetween(today, '9999-12-31')))};
 }
 
+const originsByDate = {purchase:'purchase',hatch:'rearing',initial:'initial'};
+export const cohortOrigin = cohort => cohort.origin ?? originsByDate[cohort.dateKind];
+export const flockEventKind = event => event.type ?? 'correction';
+
+export function cohortEvents(cohort, changes, date = '9999-12-31') {
+  return changes.filter(row => !row.deleted && row.cohortId === cohort.id && row.date <= date)
+    .sort((a,b) => a.date.localeCompare(b.date) || (a.order ?? 0) - (b.order ?? 0) ||
+      a.createdAt.localeCompare(b.createdAt) || b.id.localeCompare(a.id));
+}
+
+export function cohortState(cohort, changes, date) {
+  const result = {count:0,status:null,layingSince:null,retiredSince:null};
+  if (date < cohort.date) return result;
+  result.count = cohort.count;
+  result.status = cohort.status ?? null;
+  result.layingSince = cohort.layingSince ?? null;
+  for (const event of cohortEvents(cohort,changes,date)) {
+    switch (flockEventKind(event)) {
+      case 'add': result.count += event.count; break;
+      case 'loss': result.count -= event.count; break;
+      case 'correction': result.count = event.count; break;
+      case 'status':
+        result.status = event.status;
+        if (event.status === 'laying') result.layingSince = event.date;
+        if (event.status === 'retired') result.retiredSince = event.date;
+        break;
+    }
+  }
+  return result;
+}
+
+export function validCohortHistory(cohort, changes) {
+  let count = cohort.count;
+  let status = cohort.status ?? null;
+  const nextStatus = {young:'laying',laying:'retired'};
+  for (const event of cohortEvents(cohort,changes)) {
+    if (event.date < cohort.date) return false;
+    switch (flockEventKind(event)) {
+      case 'add': count += event.count; break;
+      case 'loss': count -= event.count; break;
+      case 'correction': count = event.count; break;
+      case 'status':
+        if (cohort.category !== 'hens' || (status && event.status !== nextStatus[status])) return false;
+        status = event.status;
+        break;
+    }
+    if (count < 0 || count > 1000000) return false;
+  }
+  return true;
+}
+
 export function cohortCount(cohort, changes, date) {
-  if (date < cohort.date) return 0;
-  const latest = changes.filter(row => !row.deleted && row.cohortId === cohort.id && row.date <= date)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))[0];
-  return latest?.count ?? cohort.count;
+  return cohortState(cohort,changes,date).count;
 }
 
 export function flockCount(cohorts, changes, date) {
-  const totals = {hens: 0, roosters: 0};
+  const totals = {hens:0,roosters:0,young:0,laying:0,retired:0,unknown:0};
   for (const cohort of cohorts) {
-    if (!cohort.deleted) totals[cohort.category] += cohortCount(cohort, changes, date);
+    if (cohort.deleted) continue;
+    const {count,status} = cohortState(cohort,changes,date);
+    totals[cohort.category] += count;
+    if (cohort.category === 'hens') totals[status ?? 'unknown'] += count;
   }
-  return {...totals, total: totals.hens + totals.roosters};
+  return {...totals,total:totals.hens + totals.roosters};
 }
 
 export function averageFlock(cohorts, changes, start, end) {
+  if (!cohorts.some(row => !row.deleted && row.date <= start)) return null;
   const duration = daysBetween(start, end);
   if (!(duration > 0)) return flockCount(cohorts, changes, start).total;
   const dates = [...new Set([start, end, ...cohorts.filter(row => !row.deleted).map(row => row.date),
@@ -124,7 +176,7 @@ export function averageFlock(cohorts, changes, start, end) {
 }
 
 export function cohortAge(cohort, today) {
-  const minimum = cohort.dateKind === 'purchase' && cohort.weeks == null;
+  const minimum = cohort.dateKind === 'initial' || (cohort.dateKind === 'purchase' && cohort.weeks == null);
   const from = cohort.dateKind === 'purchase' ? addDays(cohort.date, -(cohort.weeks ?? 0) * 7) : cohort.date;
   const [year, month, day] = from.split('-').map(Number);
   const [currentYear, currentMonth, currentDay] = today.split('-').map(Number);

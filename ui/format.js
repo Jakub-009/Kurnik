@@ -21,6 +21,18 @@ export function quantity(value, unit = 'kg', mixing = false) {
   return number(value, digits, mixing && Math.abs(value) < 10 ? Math.min(digits, 2) : 0) + ' ' + unit;
 }
 
+export function mixingQuantity(value, unit = 'kg') {
+  const step = value >= 5 ? 10 : value >= .05 ? 20 : 1000;
+  const rounded = Math.round(value * step) / step;
+  const prefix = Math.abs(rounded - value) > 1e-8 ? '≈ ' : '';
+  return prefix + number(rounded,3) + ' ' + unit;
+}
+
+export const cohortOrigins = {purchase:'Zakup', rearing:'Odchów', initial:'Stan początkowy'};
+export const cohortStatuses = {young:'Młode', laying:'Nioski', retired:'Wycofane'};
+export const lossReasons = {died:'Padła', culled:'Wybrakowana', slaughter:'Ubój'};
+export const flockEvents = {add:'Nowe ptaki', loss:'Ubytek', status:'Zmiana statusu', correction:'Korekta liczby'};
+
 export function editable(value, digits = 3) {
   return value == null ? '' : number(value, digits).replace(/\s/g, '');
 }

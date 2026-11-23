@@ -13,7 +13,7 @@ const undo = document.getElementById('undo');
 const dialog = document.getElementById('dialog');
 const routes = {
   start:views.start, feed:views.feed, stock:views.warehouse, flock:views.flockView,
-  recipe:views.recipeView, batch:views.batchView, ingredient:views.ingredientView, cohort:views.cohortView,
+  recipe:views.recipeView, batch:views.batchView, ingredient:views.ingredientView, cohort:views.cohortView, 'flock-add':views.flockAdd,
   'recipe-form':forms.recipeForm, 'ingredient-form':forms.ingredientForm, movement:forms.movementForm,
   mix:(ctx,id) => forms.mixForm(ctx,'mix',id,history.state?.origin),
   'batch-form':(ctx,id) => forms.mixForm(ctx,'batch-form',id),
@@ -72,6 +72,7 @@ function render(focus = true, resetScroll = true) {
   };
   screen = Object.hasOwn(routes,name) ? routes[name](context,...args) : views.missing();
   app.innerHTML = views.frame(screen,route);
+  screen.mount?.();
   document.title = screen.title === 'Kurnik' ? 'Kurnik' : screen.title + ' · Kurnik';
   if (resetScroll) window.scrollTo(0,0);
   if (focus) app.querySelector('h1').focus({preventScroll:true});
