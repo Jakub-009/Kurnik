@@ -1,3 +1,6 @@
+import {migrations} from './migrate.js';
+import {t} from '../ui/texts.js';
+
 export const stores = ['ingredients', 'ingredientEvents', 'recipes', 'batches', 'cohorts', 'cohortChanges', 'settings'];
 
 export const live = rows => rows.filter(row => !row.deleted);
@@ -6,12 +9,12 @@ export const record = fields => ({
 });
 
 function initialData() {
-  const ingredients = ['Pszenica', 'Kukurydza', 'Śruta sojowa', 'Groch', 'Kreda', 'Dolmix DN', 'Olej']
-    .map((name, i) => record({name, unit: i === 6 ? 'l' : 'kg', density: i === 6 ? 0.92 : null, price: null, oil: i === 6}));
+  const ingredients = t.defaultIngredients
+    .map((name, i) => record({name, unit: i === 6 ? 'l' : 'kg', density: i === 6 ? 0.92 : null, price: null, kind: i === 6 ? 'additive' : 'base'}));
   const amounts = [17000, 13000, 10000, 5000, 3250, 1250, 1000];
   return {
     ingredients, ingredientEvents: [], batches: [], cohorts: [], cohortChanges: [],
-    recipes: [record({name: 'Mieszanka podstawowa', current: true, notes: '',
+    recipes: [record({name: t.defaultRecipe, current: true, notes: '',
       items: ingredients.map(({id}, i) => ({ingredientId: id, amount: amounts[i]}))})],
     settings: [record({revision: 0, threshold: 30, defaultDaily: 3700, readyPrice: null, lastExport: null})]
   };
@@ -19,15 +22,39 @@ function initialData() {
 
 export async function openDatabase() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('kurnik', 1);
-    request.onupgradeneeded = () => {
-      const data = initialData();
-      for (const name of stores) {
-        const store = request.result.createObjectStore(name, {keyPath: 'id'});
-        for (const row of data[name]) store.add(row);
+    const request = indexedDB.open('kurnik', 2);
+    let wasBlocked = false;
+    request.onupgradeneeded = event => {
+      if (event.oldVersion === 0) {
+        const data = initialData();
+        for (const name of stores) {
+          const store = request.result.createObjectStore(name,{keyPath:'id'});
+          for (const row of data[name]) store.add(row);
+        }
+        return;
+      }
+      for (const [name,migrate] of Object.entries(migrations)) {
+        const scan = request.transaction.objectStore(name).openCursor();
+        scan.onsuccess = () => {
+          const cursor = scan.result;
+          if (!cursor) return;
+          const row = cursor.value;
+          migrate(row);
+          cursor.update(row);
+          cursor.continue();
+        };
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => db.close();
+      if (wasBlocked) db.close();
+      else resolve(db);
+    };
+    request.onblocked = () => {
+      wasBlocked = true;
+      reject(new Error(t.conflict));
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -70,7 +97,7 @@ export function saveData(db, previous, next) {
       }
     };
     tx.oncomplete = () => resolve();
-    tx.onabort = () => reject(conflict ? Object.assign(new Error('Dane zmieniły się w innym oknie. Otwórz formularz ponownie.'), {conflict:true}) : tx.error);
+    tx.onabort = () => reject(conflict ? Object.assign(new Error(t.conflict), {conflict:true}) : tx.error);
   });
 }
 

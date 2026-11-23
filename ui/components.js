@@ -1,3 +1,4 @@
+import {t} from './texts.js';
 import {icon} from './icons.js';
 import * as fmt from './format.js';
 
@@ -10,6 +11,11 @@ export const button = (label, action, style = '', symbol = '') =>
 
 export const link = (label, route, style = '', symbol = '') =>
   `<a class="button ${style ? 'button--' + style : ''}" href="#${html(route)}">${symbol ? icon(symbol) : ''}${html(label)}</a>`;
+
+export function choices(group, options, current) {
+  return options.map(([key,label]) =>
+    `<button type="button" class="chip" aria-pressed="${key === current}" data-action="${html(group + ':' + key)}">${html(label)}</button>`).join('');
+}
 
 export const iconButton = (label, symbol, action) =>
   `<button class="icon-button" type="button" aria-label="${html(label)}" data-action="${html(action)}">${icon(symbol)}</button>`;
@@ -27,13 +33,14 @@ export function row({name, sub = '', value = '', symbol = '', route = '', action
   return `<div class="list-row">${content}</div>`;
 }
 
-export function forecast(value, threshold, today, compact = false) {
-  if (!value) return compact ? '' : '<small>Brak prognozy dla aktualnej receptury.</small>';
+export function forecast(value, threshold, today, compact = false, hasRecipeItem = false) {
+  if (!value) return compact ? '' : hasRecipeItem ? `<small>${t.nieMaDanychOZuzyciuDziennym}</small>` :
+    `<small>${t.tegoSkladnikaNieMaWAktualnej}</small>`;
   const low = value.days < threshold;
-  const bar = `<progress class="forecast-track" aria-label="Prognoza zapasu względem progu" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
+  const bar = `<progress class="forecast-track" aria-label="${t.prognozaZapasuWzgledemProgu}" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
   return `<span class="forecast ${low ? 'forecast--low' : ''}">
     <span class="forecast-line"><strong>${low && !compact ? icon('warn') + ' ' : ''}${fmt.days(value.days)}</strong>${compact ? '' : `<span>${fmt.listDate(value.date, today)}</span>`}</span>
-    ${bar}<small>prognoza${compact ? ' · ' + fmt.listDate(value.date, today) : ''}</small></span>`;
+    ${bar}<small>${t.prognoza}${compact ? ' · ' + fmt.listDate(value.date, today) : ''}</small></span>`;
 }
 
 export const banner = (title, description, action = '', compact = false) =>
@@ -67,7 +74,7 @@ export const dateField = (name, label, value, min = '1900-01-01', max = '9999-12
   field(name, label, value, {type:'date', min, max});
 
 export const changeRow = (title, value, action) =>
-  `<div class="value-row"><span class="grow">${html(title)} <strong>${html(value)}</strong></span>${button('Zmień', action)}</div>`;
+  `<div class="value-row"><span class="grow">${html(title)} <strong>${html(value)}</strong></span>${button(t.zmien, action)}</div>`;
 
 export function numberField(name, label, value = '', unit = '', mode = 'decimal') {
   const input = `<div class="number-field"><input autocomplete="off" id="${name}"
@@ -76,11 +83,11 @@ export function numberField(name, label, value = '', unit = '', mode = 'decimal'
   return fieldWrap(name,label,input);
 }
 
-export const form = (content, submit = 'Zapisz', deletable = false) =>
+export const form = (content, submit = t.zapisz, deletable = false) =>
   `<form class="screen-form" novalidate>${content}
     <p data-form-error class="error-panel" role="alert" hidden></p>
     <div class="form-actions"><button class="button button--filled" type="submit">${html(submit)}</button>
-      ${deletable ? button('Usuń', 'delete', 'danger', 'del') : ''}</div>
+      ${deletable ? button(t.usun, 'delete', 'danger', 'del') : ''}</div>
   </form>`;
 
 export class FieldError extends Error {
@@ -96,8 +103,8 @@ export function readNumber(value, name, {optional = false, min = 0, max = 100000
   const pattern = digits ? new RegExp('^(?:[0-9]+(?:\\.[0-9]{1,' + digits + '})?|\\.[0-9]{1,' + digits + '})$') : /^[0-9]+$/;
   const numeric = Number(text);
   if (!pattern.test(text) || numeric < min || numeric > max) {
-    const range = 'Podaj liczbę od ' + fmt.number(min, digits) + ' do ' + fmt.number(max, digits) + '.';
-    throw new FieldError(name, !text ? 'Uzupełnij to pole.' : range);
+    const range = t.podajLiczbeOd + fmt.number(min, digits) + ' do ' + fmt.number(max, digits) + '.';
+    throw new FieldError(name, !text ? t.uzupelnijToPole : range);
   }
   return numeric;
 }
@@ -109,14 +116,14 @@ export function validDate(value, min = '1900-01-01', max = '9999-12-31') {
 
 export function readDate(value, name, min, max) {
   if (!validDate(value, min, max)) {
-    throw new FieldError(name, 'Podaj datę z zakresu ' + fmt.fullDate(min ?? '1900-01-01') + ' – ' + fmt.fullDate(max ?? '9999-12-31') + '.');
+    throw new FieldError(name, t.podajDateZZakresu + fmt.fullDate(min ?? '1900-01-01') + ' – ' + fmt.fullDate(max ?? '9999-12-31') + '.');
   }
   return value;
 }
 
 export function readName(value, name = 'name') {
   const result = String(value ?? '').trim();
-  if (!result || result.length > 80) throw new FieldError(name, 'Podaj nazwę od 1 do 80 znaków.');
+  if (!result || result.length > 80) throw new FieldError(name, t.podajNazweOd1Do80);
   return result;
 }
 

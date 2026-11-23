@@ -1,8 +1,11 @@
+import {t} from './texts.js';
 const locale = 'pl-PL';
 const numberFormats = new Map();
 const plural = new Intl.PluralRules(locale);
 const dateFormats = {
   short: new Intl.DateTimeFormat(locale, {day:'2-digit', month:'2-digit', timeZone:'UTC'}),
+  chartMonth:new Intl.DateTimeFormat(locale,{month:'2-digit',timeZone:'UTC'}),
+  chartYear:new Intl.DateTimeFormat(locale,{year:'numeric',timeZone:'UTC'}),
   full: new Intl.DateTimeFormat(locale, {day:'2-digit', month:'2-digit', year:'numeric', timeZone:'UTC'}),
   heading: new Intl.DateTimeFormat(locale, {weekday:'long', month:'long', day:'numeric', timeZone:'UTC'}),
 };
@@ -22,9 +25,8 @@ export function quantity(value, unit = 'kg', mixing = false) {
 }
 
 export function mixingQuantity(value, unit = 'kg') {
-  const step = value >= 5 ? 10 : value >= .05 ? 20 : 1000;
-  const rounded = Math.round(value * step) / step;
-  return number(rounded,3) + ' ' + unit;
+  const rounded = Math.round(value * 10) / 10;
+  return number(rounded || value,3) + ' ' + unit;
 }
 
 export function stockQuantity(value, unit, signed = false) {
@@ -32,11 +34,6 @@ export function stockQuantity(value, unit, signed = false) {
   const sign = digits === '0' ? '' : value < 0 ? '−' : signed ? '+' : '';
   return sign + digits + ' ' + unit;
 }
-
-export const cohortOrigins = {purchase:'Zakup', rearing:'Odchów', initial:'Stan początkowy'};
-export const cohortStatuses = {young:'Młode', laying:'Nioski', retired:'Wycofane'};
-export const lossReasons = {died:'Padła', culled:'Wybrakowana', slaughter:'Ubój'};
-export const flockEvents = {add:'Nowe ptaki', loss:'Ubytek', status:'Zmiana statusu', correction:'Korekta liczby'};
 
 export function editable(value, digits = 3) {
   return value == null ? '' : number(value, digits).replace(/\s/g, '');
@@ -55,14 +52,21 @@ export function counted(value, forms) {
   return number(integer) + ' ' + forms[plural.select(integer)];
 }
 
-export const days = value => counted(value, {one:'dzień', few:'dni', many:'dni', other:'dni'});
-export const birds = value => counted(value, {one:'ptak', few:'ptaki', many:'ptaków', other:'ptaka'});
-export const hens = value => counted(value, {one:'kura', few:'kury', many:'kur', other:'kury'});
-export const roosters = value => counted(value, {one:'kogut', few:'koguty', many:'kogutów', other:'koguta'});
+export const days = value => counted(value, {one:t.dzien, few:t.dni, many:t.dni, other:t.dni});
+export const birds = value => counted(value, {one:t.ptak, few:t.ptaki, many:t.ptakow, other:t.ptaka});
+export const hens = value => counted(value, {one:t.kura, few:t.kury2, many:t.kur, other:t.kury2});
+export const roosters = value => counted(value, {one:t.kogut, few:t.koguty2, many:t.kogutow, other:t.koguta});
 
 export function age({months, minimum}) {
   const years = Math.floor(months / 12);
-  const yearLabel = years ? counted(years, {one:'rok', few:'lata', many:'lat', other:'roku'}) : '';
-  const monthLabel = !years || months % 12 ? number(months % 12) + ' mies.' : '';
-  return (minimum ? 'co najmniej ' : '') + [yearLabel, monthLabel].filter(Boolean).join(' ');
+  const yearLabel = years ? counted(years, {one:t.rok, few:t.lata, many:t.lat, other:t.roku}) : '';
+  const monthLabel = !years || months % 12 ? number(months % 12) + t.mies : '';
+  return (minimum ? t.coNajmniej : '') + [yearLabel, monthLabel].filter(Boolean).join(' ');
 }
+
+export const chartMonth = value => dateFormats.chartMonth.format(new Date(value));
+export const chartYear = value => dateFormats.chartYear.format(new Date(value));
+export const pieces = value => number(value) + t.szt2;
+export const feedingDay = value => t.dzienKarmienia + number(value);
+export const unfinishedBatches = value => t.maszJeszcze + counted(value,{one:t.niezakonczonaPartie,
+  few:t.niezakonczonePartie,many:t.niezakonczonychPartii,other:t.niezakonczonejPartii}) + '.';

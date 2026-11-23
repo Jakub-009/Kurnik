@@ -1,9 +1,12 @@
 import {stores, live, refreshPrices} from './db.js';
-import {flockEventKind,ingredientMass,recipeComposition,validCohortHistory} from './calc/index.js';
+import {flockEventKind,batchBaseMass,recipeComposition,validCohortHistory} from './calc/index.js';
 import {validDate} from '../ui/components.js';
 
+import {migrateData} from './migrate.js';
+import {t} from '../ui/texts.js';
+
 const format = 'kurnik-backup';
-const version = 3;
+const version = 4;
 const text = (value, max = 1000) => typeof value === 'string' && value.length <= max;
 const name = value => text(value,80) && value.trim().length > 0;
 const int = (value,min = 0,max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= min && value <= max;
@@ -18,7 +21,7 @@ const optionalDate = value => value === null || date(value);
 const own = (map,key) => Object.hasOwn(map,key);
 
 function requireThat(condition) {
-  if (!condition) throw new Error('Kopia zawiera nieprawidłowe lub niespójne dane Kurnika.');
+  if (!condition) throw new Error(t.invalidBackup);
 }
 
 function uniqueKeys(rows,key) {
@@ -32,11 +35,13 @@ export function encodeBackup(data, today) {
 }
 
 export function decodeBackup(raw) {
-  let source;
-  try { source = JSON.parse(raw); }
-  catch { throw new Error('Plik nie jest poprawnym JSON-em. Wybierz kopię Kurnika.'); }
-  if (source?.format !== format || ![1,2,version].includes(source.version) || !source.data || !date(source.exportedAt)) {
-    throw new Error('Format lub wersja kopii nie jest obsługiwana.');
+  try { return decodeData(JSON.parse(raw)); }
+  catch { throw new Error(t.invalidBackup); }
+}
+
+function decodeData(source) {
+  if (source?.format !== format || ![1,2,3,version].includes(source.version) || !source.data || !date(source.exportedAt)) {
+    throw new Error(t.invalidBackup);
   }
   const data = Object.fromEntries(stores.map(key => [key,source.data[key]]));
   for (const key of stores) {
@@ -50,6 +55,8 @@ export function decodeBackup(raw) {
   const activeBatches = new Set(live(data.batches).map(row => row.id));
   const cohorts = new Map(data.cohorts.map(row => [row.id,row]));
   requireThat(data.ingredients.every(row => name(row.name) && units(row) && price(row.price) &&
+    (row.kind === undefined || ['base','additive'].includes(row.kind)) &&
+    (row.lastSource === undefined || ['purchase','addition'].includes(row.lastSource)) &&
     (row.oil == null || (typeof row.oil === 'boolean' && (!row.oil || row.unit === 'l')))));
   for (const recipe of data.recipes) {
     requireThat(name(recipe.name) && text(recipe.notes) && typeof recipe.current === 'boolean' &&
@@ -70,11 +77,14 @@ export function decodeBackup(raw) {
       int(batch.mass,1) && Array.isArray(batch.items) && batch.items.length > 0 &&
       batch.items.every(row => row && ingredientIds.has(row.ingredientId) && name(row.name) && units(row) &&
         int(row.grams,1) && price(row.price)) && uniqueKeys(batch.items,'ingredientId') &&
-      batch.items.reduce((sum,row) => sum + row.grams,0) === batch.mass);
-    const oilItems = batch.items.filter(item => item.oil !== undefined || item.millilitres !== undefined);
-    requireThat(oilItems.length < batch.items.length && oilItems.length <= 1 && oilItems.every(item =>
-      item.oil === true && item.unit === 'l' && int(item.millilitres,1) &&
-      item.grams === ingredientMass(item.millilitres,'l',item.density)));
+      (batch.massBasis === undefined || batch.massBasis === 'base') &&
+      (batch.savedOrder === undefined || int(batch.savedOrder,1)) &&
+      batch.items.reduce((sum,row) => sum + (batch.massBasis === 'base' && (row.additive || row.oil) ? 0 : row.grams),0) === batch.mass);
+    requireThat(batchBaseMass(batch) > 0 && batch.items.every(item =>
+      (item.additive === undefined || item.additive === true) &&
+      (!item.oil || (item.oil === true && item.unit === 'l' && int(item.millilitres,1))) &&
+      (item.millilitres === undefined || (item.unit === 'l' && int(item.millilitres,1) &&
+        Math.round(item.millilitres * item.density) === item.grams))));
   }
   const batchEvents = new Map();
   for (const event of data.ingredientEvents) {
@@ -108,7 +118,7 @@ export function decodeBackup(raw) {
     requireThat(cohort.origin === undefined || cohort.origin === 'initial' ||
       (cohort.origin === 'purchase' && cohort.dateKind === 'purchase') ||
       (cohort.origin === 'rearing' && cohort.dateKind === 'hatch'));
-    requireThat(cohort.status == null || (cohort.category === 'hens' && ['young','laying','retired'].includes(cohort.status)));
+    requireThat(cohort.status == null || ['young','laying','retired'].includes(cohort.status));
     requireThat(cohort.expectedStart == null || (cohort.category === 'hens' && date(cohort.expectedStart)));
     requireThat(cohort.layingSince == null || (['laying','retired'].includes(cohort.status) && date(cohort.layingSince)));
   }
@@ -118,8 +128,8 @@ export function decodeBackup(raw) {
     requireThat(change.order === undefined || int(change.order,1));
     const kind = flockEventKind(change);
     if (kind === 'status') requireThat(['young','laying','retired'].includes(change.status));
-    else if (kind === 'add') requireThat(int(change.count,1,1000000) && ['purchase','rearing'].includes(change.origin));
-    else if (kind === 'loss') requireThat(int(change.count,1,1000000) && ['died','culled','slaughter'].includes(change.reason));
+    else if (kind === 'add') requireThat(int(change.count,1,1000000) && (change.origin === undefined || ['purchase','rearing'].includes(change.origin)));
+    else if (kind === 'loss') requireThat(int(change.count,1,1000000) && (change.reason === undefined || ['died','culled','slaughter'].includes(change.reason)));
     else requireThat(kind === 'correction' && int(change.count,0,1000000));
   }
   requireThat(live(data.cohorts).every(cohort => validCohortHistory(cohort,data.cohortChanges)));
@@ -128,5 +138,5 @@ export function decodeBackup(raw) {
     int(settings.threshold,1,3650) && int(settings.defaultDaily,1,10000000000) &&
     (settings.readyPrice === null || int(settings.readyPrice,1,10000000000)) && optionalDate(settings.lastExport));
   refreshPrices(data);
-  return data;
+  return migrateData(data);
 }

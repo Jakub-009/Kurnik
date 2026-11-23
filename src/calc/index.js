@@ -1,3 +1,5 @@
+import {t} from '../../ui/texts.js';
+
 const DAY = 86400000;
 
 export function isoDate(date = new Date()) {
@@ -13,50 +15,75 @@ export function addDays(date, days) {
 }
 
 export function ingredientMass(amount, unit, density) {
-  if (unit === 'l' && !(density > 0)) throw new RangeError('Podaj gęstość składnika w kg/l.');
+  if (unit === 'l' && !(density > 0)) throw new RangeError(t.densityError);
   const grams = Math.round(unit === 'l' ? amount * density : amount);
-  if (!Number.isSafeInteger(grams) || grams < 1) throw new RangeError('Ilość musi odpowiadać co najmniej 1 g.');
+  if (!Number.isSafeInteger(grams) || grams < 1) throw new RangeError(t.minimumWeight);
   return grams;
 }
 
-export function isMixingOil(ingredient) {
-  return ingredient.unit === 'l' && (ingredient.oil ?? /^olej(?:\s|$)/iu.test(ingredient.name.trim()));
+export function isAdditive(ingredient) {
+  if (ingredient.kind !== undefined) return ingredient.kind === 'additive';
+  return ingredient.oil === true || (ingredient.oil !== false && ingredient.unit === 'l' &&
+    /^olej(?:\s|$)/iu.test(ingredient.name.trim()));
 }
 
 export function recipeBaseItems(recipe, ingredients) {
-  return recipe.items.filter(item => {
-    const ingredient = ingredients.find(row => row.id === item.ingredientId);
-    return !ingredient || !isMixingOil(ingredient);
-  });
+  const byId = new Map(ingredients.map(ingredient => [ingredient.id,ingredient]));
+  return recipe.items.filter(item => !byId.has(item.ingredientId) || !isAdditive(byId.get(item.ingredientId)));
 }
 
-export function recipeOil(recipe, ingredients) {
-  const position = recipe.items.findIndex(item => {
-    const ingredient = ingredients.find(row => row.id === item.ingredientId);
-    return ingredient && isMixingOil(ingredient);
-  });
-  if (position < 0) return null;
-  return {...recipe.items[position],position};
+export const sumItemMass = items => items.reduce((sum,item) => sum + item.grams,0);
+export const nextSavedOrder = batches => batches.reduce((max,batch) => Math.max(max,batch.savedOrder ?? 0),0) + 1;
+
+export const batchAdditives = batch => (batch.items ?? []).filter(item => item.additive || item.oil);
+export const batchBaseMass = batch => batch.massBasis === 'base'
+  ? batch.mass : batch.mass - batchAdditives(batch).reduce((sum,item) => sum + item.grams,0);
+
+export function batchBaseRemaining(batch) {
+  return (batch.remaining ?? 0) * batchBaseMass(batch) / batch.mass;
 }
 
-export function scaledOilMl(oil, baseMass, targetMass) {
-  return Math.round(oil.amount * targetMass / baseMass);
-}
-
-export const batchOil = batch => batch.items.find(item => item.oil);
-export const batchBaseMass = batch => batch.mass - (batchOil(batch)?.grams ?? 0);
+export const batchIsFinished = (batch,today) => Boolean(batch.end && batch.end <= addDays(today,1));
 
 export function recipeComposition(recipe, ingredients) {
-  const items = recipeBaseItems(recipe,ingredients).map(({ingredientId, amount}) => {
-    const ingredient = ingredients.find(row => row.id === ingredientId);
-    if (!ingredient) throw new RangeError('Brakuje składnika receptury.');
-    return {ingredientId, amount, name: ingredient.name, unit: ingredient.unit,
-      density: ingredient.density, price: ingredient.price,
-      grams: ingredientMass(amount, ingredient.unit, ingredient.density)};
+  const byId = new Map(ingredients.map(item => [item.id,item]));
+  const positions = recipe.items.map(({ingredientId,amount},position) => {
+    const ingredient = byId.get(ingredientId);
+    if (!ingredient) throw new RangeError(t.ingredientMissing);
+    return {ingredientId,amount,position,name:ingredient.name,unit:ingredient.unit,
+      density:ingredient.density,price:ingredient.price,additive:isAdditive(ingredient),
+      grams:ingredientMass(amount,ingredient.unit,ingredient.density)};
   });
-  const mass = items.reduce((sum, item) => sum + item.grams, 0);
-  if (!recipe.items.length || !Number.isSafeInteger(mass)) throw new RangeError('Receptura musi zawierać składniki.');
-  return {mass, items: items.map(item => ({...item, share: item.grams / mass}))};
+  const items = positions.filter(item => !item.additive);
+  const mass = items.reduce((sum,item) => sum + item.grams,0);
+  if (!recipe.items.length || !Number.isSafeInteger(mass)) throw new RangeError(t.recipeEmpty);
+  return {mass,items:items.map(item => ({...item,share:item.grams / mass})),
+    additives:positions.filter(item => item.additive)};
+}
+
+export function scaleBatchRecipe(composition, grams) {
+  const items = scaleRecipe(composition,grams);
+  for (const item of composition.additives) {
+    const amount = Math.round(item.amount * grams / composition.mass);
+    const mass = Math.round(item.unit === 'l' ? amount * item.density : amount);
+    items.push({...item,grams:mass,...(item.unit === 'l' ? {millilitres:amount} : {})});
+  }
+  return items.sort((a,b) => a.position - b.position);
+}
+
+export function lastBatchMass(batches) {
+  const last = batches.filter(batch => !batch.deleted)
+    .sort((a,b) => b.createdAt.localeCompare(a.createdAt) || (b.savedOrder ?? 0) - (a.savedOrder ?? 0) ||
+      b.date.localeCompare(a.date) || b.id.localeCompare(a.id))[0];
+  return last ? batchBaseMass(last) : 100000;
+}
+
+export function lastStockSource(events, ingredient) {
+  if (ingredient.lastSource) return ingredient.lastSource;
+  const last = events.filter(event => !event.deleted && event.ingredientId === ingredient.id &&
+    ['purchase','addition'].includes(event.type))
+    .sort((a,b) => b.createdAt.localeCompare(a.createdAt) || b.date.localeCompare(a.date))[0];
+  return last?.type ?? 'purchase';
 }
 
 export function scaleRecipe(composition, grams) {
@@ -70,13 +97,13 @@ export function scaleRecipe(composition, grams) {
   return scaled.map(({index, remainder, ...item}) => item);
 }
 
-export function mixtureCost(items) {
+export function mixtureCost(items, baseMass) {
   const priced = items.filter(item => item.price);
   if (!priced.length) return {kind: 'none'};
   if (priced.length !== items.length) return {kind: 'partial'};
   const cents = items.reduce((sum, item) => sum + item.grams * item.price.cents / item.price.grams, 0);
   const grams = items.reduce((sum, item) => sum + item.grams, 0);
-  return {kind: 'full', cents, perKg: cents / grams * 1000};
+  return {kind: 'full', cents, perKg: cents / (baseMass ?? grams) * 1000};
 }
 
 export function savings(grams, readyPrice, ownPrice) {
@@ -85,7 +112,7 @@ export function savings(grams, readyPrice, ownPrice) {
 
 export function batchResult(batch) {
   const days = batch.end ? daysBetween(batch.start, batch.end) : 0;
-  const consumed = batch.mass - (batch.remaining ?? 0);
+  const consumed = batchBaseMass(batch) - batchBaseRemaining(batch);
   return {days, consumed, daily: days > 0 ? consumed / days : null};
 }
 
@@ -102,7 +129,7 @@ function unionDays(batches) {
 }
 
 export function dailyAverage(batches, fallback, today, consumedMass = batch => batchResult(batch).consumed) {
-  const recent = batches.filter(row => !row.deleted && row.end && row.end <= today && row.end > row.start)
+  const recent = batches.filter(row => !row.deleted && batchIsFinished(row,today) && row.end > row.start)
     .sort((a, b) => b.end.localeCompare(a.end) || b.createdAt.localeCompare(a.createdAt)).slice(0, 3);
   const days = unionDays(recent);
   const consumed = recent.reduce((sum, row) => sum + consumedMass(row), 0);
@@ -115,17 +142,58 @@ export function stock(events, ingredientId, excludeId) {
 }
 
 export function remainingMix(batch, daily, today) {
-  return Math.max(0, batch.mass - daily * Math.max(0, daysBetween(batch.start, today)));
+  return Math.max(0, (batch.items ? batchBaseMass(batch) : batch.mass) - daily * Math.max(0, daysBetween(batch.start, today)));
+}
+
+export function openBatchForecast(batches,daily,today) {
+  const open = batches.filter(batch => batch.start <= today && !batchIsFinished(batch,today))
+    .sort((a,b) => a.start.localeCompare(b.start) || a.createdAt.localeCompare(b.createdAt));
+  let usedUntil = '';
+  return open.map(batch => {
+    const available = usedUntil > batch.start ? usedUntil : batch.start;
+    const elapsed = Math.max(0,daysBetween(available,today));
+    const remaining = remainingMix({...batch,start:available},daily,today);
+    const used = batchBaseMass(batch) - remaining;
+    if (daily > 0) usedUntil = new Date(Date.parse(available) + used / daily * DAY).toISOString();
+    return {batch,elapsed,used,remaining};
+  });
+}
+
+export function recipeStockRates(composition) {
+  if (!composition?.mass) return new Map();
+  return new Map([
+    ...composition.items.map(item => [item.ingredientId,item.share]),
+    ...composition.additives.map(item => [item.ingredientId,item.grams / composition.mass])
+  ]);
 }
 
 export function supplyForecast(grams, share, daily, mixedGrams, today) {
   if (!share || !daily) return null;
   const days = Math.max(0, (grams + share * mixedGrams) / (daily * share));
-  return {days, date: addDays(today, Math.min(Math.round(days), daysBetween(today, '9999-12-31')))};
+  return {days, daily:daily * share, available:grams + share * mixedGrams,
+    date:addDays(today,Math.min(Math.round(days),daysBetween(today,'9999-12-31')))};
 }
 
-const originsByDate = {purchase:'purchase',hatch:'rearing',initial:'initial'};
-export const cohortOrigin = cohort => cohort.origin ?? originsByDate[cohort.dateKind];
+export function buyAmount(outlook, days, ingredient) {
+  const needed = outlook.daily * days - outlook.available;
+  if (needed <= 0) return 0;
+  const step = ingredient.unit === 'l' ? ingredient.density * 100 : 1000;
+  return Math.ceil(needed / step - 1e-10) / (ingredient.unit === 'l' ? 10 : 1);
+}
+
+export function consumptionHistory(batches,today) {
+  return batches.filter(batch => !batch.deleted && batchIsFinished(batch,today) && batch.end > batch.start)
+    .sort((a,b) => a.end.localeCompare(b.end) || a.createdAt.localeCompare(b.createdAt))
+    .slice(-12).map(batch => ({date:addDays(batch.end,-1),daily:batchResult(batch).daily}));
+}
+
+export const displayAmount = (grams,ingredient) =>
+  grams / 1000 / (ingredient.unit === 'l' ? ingredient.density : 1);
+
+export function nextFlockEventOrder(events) {
+  return events.reduce((max,event) => Math.max(max,event.order ?? 0),0) + 1;
+}
+
 export const flockEventKind = event => event.type ?? 'correction';
 
 export function cohortEvents(cohort, changes, date = '9999-12-31') {
@@ -134,58 +202,37 @@ export function cohortEvents(cohort, changes, date = '9999-12-31') {
       a.createdAt.localeCompare(b.createdAt) || b.id.localeCompare(a.id));
 }
 
-export function cohortState(cohort, changes, date) {
-  const result = {count:0,status:null,layingSince:null,retiredSince:null};
-  if (date < cohort.date) return result;
-  result.count = cohort.count;
-  result.status = cohort.status ?? null;
-  result.layingSince = cohort.layingSince ?? null;
+export function cohortCount(cohort, changes, date) {
+  if (date < cohort.date) return 0;
+  let count = cohort.count;
   for (const event of cohortEvents(cohort,changes,date)) {
     switch (flockEventKind(event)) {
-      case 'add': result.count += event.count; break;
-      case 'loss': result.count -= event.count; break;
-      case 'correction': result.count = event.count; break;
-      case 'status':
-        result.status = event.status;
-        if (event.status === 'laying') result.layingSince = event.date;
-        if (event.status === 'retired') result.retiredSince = event.date;
-        break;
+      case 'add': count += event.count; break;
+      case 'loss': count -= event.count; break;
+      case 'correction': count = event.count; break;
     }
   }
-  return result;
+  return count;
 }
 
 export function validCohortHistory(cohort, changes) {
   let count = cohort.count;
-  let status = cohort.status ?? null;
-  const nextStatus = {young:'laying',laying:'retired'};
   for (const event of cohortEvents(cohort,changes)) {
     if (event.date < cohort.date) return false;
     switch (flockEventKind(event)) {
       case 'add': count += event.count; break;
       case 'loss': count -= event.count; break;
       case 'correction': count = event.count; break;
-      case 'status':
-        if (cohort.category !== 'hens' || (status && event.status !== nextStatus[status])) return false;
-        status = event.status;
-        break;
     }
     if (count < 0 || count > 1000000) return false;
   }
   return true;
 }
 
-export function cohortCount(cohort, changes, date) {
-  return cohortState(cohort,changes,date).count;
-}
-
 export function flockCount(cohorts, changes, date) {
-  const totals = {hens:0,roosters:0,young:0,laying:0,retired:0,unknown:0};
+  const totals = {hens:0,roosters:0};
   for (const cohort of cohorts) {
-    if (cohort.deleted) continue;
-    const {count,status} = cohortState(cohort,changes,date);
-    totals[cohort.category] += count;
-    if (cohort.category === 'hens') totals[status ?? 'unknown'] += count;
+    if (!cohort.deleted) totals[cohort.category] += cohortCount(cohort,changes,date);
   }
   return {...totals,total:totals.hens + totals.roosters};
 }

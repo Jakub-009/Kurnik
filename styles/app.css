@@ -5,7 +5,7 @@ html { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-sur
 body { margin: 0; font-variant-numeric: tabular-nums; line-height: 1.5; }
 button, input, select, textarea { font: inherit; }
 button, label:has(input[type="checkbox"]) { cursor: pointer; }
-:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+:is(button, a, input, select, textarea, summary, [tabindex="0"]):focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
 .list-row:focus-visible { outline-offset: -3px; }
 button:disabled { opacity: .5; cursor: default; }
 h1, h2, h3, p, dl, dd { margin: 0; }
@@ -63,9 +63,6 @@ legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
 .recipe-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 48px; gap: 4px 8px; align-items: start; }
 .recipe-line > .icon-button { margin-top: 26px; }
 .recipe-line:not(:last-child) { border-bottom: 1px solid var(--md-sys-color-outline-variant); }
-.mix-oil { margin-block: 8px; background: var(--md-sys-color-secondary-container); }
-.oil-check { display: flex; align-items: center; gap: 8px; min-height: 48px; }
-.oil-check input { width: 20px; height: 20px; accent-color: var(--md-sys-color-primary); }
 .recipe-line small { display: block; }
 .checklist-row label span { min-width: 0; }
 .checklist-row .button { white-space: normal; word-break: normal; font-variant-numeric: tabular-nums; }
@@ -96,3 +93,13 @@ body:has(#snackbar:not([hidden])) .page--form { padding-bottom: calc(80px + var(
 .order-handle { touch-action: none; cursor: grab; font-size: 24px; }
 .order-row--dragging .order-handle { cursor: grabbing; }
 .current-estimate dd { font-size: 1.25rem; font-weight: 700; }
+
+.start-card { min-width: 0; min-height: 120px; text-decoration: none; color: inherit; }
+.start-card .button { justify-self: start; }
+.start-card .display { color: var(--md-sys-color-primary); }
+.start-empty { color: var(--md-sys-color-on-surface-variant); }
+.chart-scroll { overflow-x: auto; max-width: 100%; }
+.consumption-chart { display: block; color: var(--md-sys-color-on-surface-variant); }
+.consumption-chart text { fill: currentColor; font-size: 11px; text-anchor: middle; font-family: inherit; }
+.consumption-chart path { stroke: currentColor; stroke-width: 1; }
+.consumption-chart rect { fill: var(--md-sys-color-primary); }

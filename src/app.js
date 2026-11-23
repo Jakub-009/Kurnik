@@ -1,4 +1,5 @@
-import {isoDate} from './calc/index.js';
+import {t} from '../ui/texts.js';
+import {addDays, isoDate} from './calc/index.js';
 import {decodeBackup, encodeBackup} from './backup.js';
 import {loadData, openDatabase, refreshPrices, saveData, stores} from './db.js';
 import {derive, setCurrent} from './model.js';
@@ -11,9 +12,12 @@ const snackbar = document.getElementById('snackbar');
 const status = document.getElementById('status');
 const undo = document.getElementById('undo');
 const dialog = document.getElementById('dialog');
+undo.textContent = t.undo;
+document.title = t.appName;
+document.querySelector('meta[name="description"]').content = t.description;
 const routes = {
   start:views.start, feed:views.feed, stock:views.warehouse, flock:views.flockView,
-  recipe:views.recipeView, batch:views.batchView, ingredient:views.ingredientView, cohort:views.cohortView, 'flock-add':views.flockAdd,
+  recipe:views.recipeView, batch:views.batchView, ingredient:views.ingredientView, cohort:views.cohortView,
   'recipe-form':forms.recipeForm, 'ingredient-form':forms.ingredientForm, movement:forms.movementForm,
   'movement-detail':views.movementDetail, 'recipe-order':forms.recipeOrderForm,
   mix:(ctx,id) => forms.mixForm(ctx,'mix',id,history.state?.origin),
@@ -51,7 +55,7 @@ function notify(message, action, duration = 5000) {
   },duration);
 }
 
-function confirm(title, message, yes, no = 'Anuluj') {
+function confirm(title, message, yes, no = t.anuluj) {
   return new Promise(resolve => {
     dialog.innerHTML = `<h2 id="dialog-title">${html(title)}</h2><p>${html(message)}</p>
       <form class="dialog-actions" method="dialog"><button class="button" value="no" autofocus>${html(no)}</button>
@@ -63,18 +67,56 @@ function confirm(title, message, yes, no = 'Anuluj') {
   });
 }
 
+let screenLock;
+let lockPending = false;
+let lockEpoch = 0;
+
+function releaseScreenLock() {
+  lockEpoch += 1;
+  if (!screenLock) return;
+  const lock = screenLock;
+  screenLock = null;
+  lock.release().catch(() => {});
+}
+
+async function syncScreenLock() {
+  if (route?.split('/')[0] !== 'mix' || !screen?.form || document.hidden) {
+    releaseScreenLock();
+    return;
+  }
+  if (screenLock || lockPending || !navigator.wakeLock?.request) return;
+  const epoch = lockEpoch;
+  lockPending = true;
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    if (epoch !== lockEpoch) {
+      await lock.release();
+      return;
+    }
+    screenLock = lock;
+    lock.addEventListener('release',() => { if (screenLock === lock) screenLock = null; },{once:true});
+  } catch {
+    // The device may deny the lock, including while in power-saving mode.
+  } finally {
+    lockPending = false;
+    if (epoch !== lockEpoch) syncScreenLock();
+  }
+}
+
 function render(focus = true, resetScroll = true) {
   displayedDate = isoDate();
   const [name,...args] = route.split('/');
   const context = {
     data, derived:derive(data,displayedDate), today:displayedDate,
     commit, confirm, go, done:complete, setCurrent, importBackup, exportBackup,
+    finishToday:(data,batch,today) => Object.assign(data.batches.find(row => row.id === batch.id),{end:addDays(today,1),remaining:0}),
     dirty:(value = true) => { dirty = value; }
   };
   screen = Object.hasOwn(routes,name) ? routes[name](context,...args) : views.missing();
   app.innerHTML = views.frame(screen,route);
   screen.mount?.();
-  document.title = screen.title === 'Kurnik' ? 'Kurnik' : screen.title + ' · Kurnik';
+  syncScreenLock();
+  document.title = screen.title === t.appName ? t.appName : screen.title + t.kurnik;
   if (resetScroll) window.scrollTo(0,0);
   if (focus) app.querySelector('h1').focus({preventScroll:true});
 }
@@ -90,7 +132,7 @@ function enter(target, replace = false) {
 }
 
 async function discard() {
-  return !dirty || await confirm('Odrzucić zmiany?', 'Niezapisane zmiany zostaną utracone.', 'Odrzuć', 'Wróć do formularza');
+  return !dirty || await confirm(t.odrzucicZmiany, t.niezapisaneZmianyZostanaUtracone, t.odrzuc, t.wrocDoFormularza);
 }
 
 async function go(target) {
@@ -133,17 +175,19 @@ async function write(update) {
     return {before,after,result};
   } catch (error) {
     if (error.conflict) data = await loadData(db);
-    throw error.conflict ? error : new Error('Nie udało się zapisać danych. Sprawdź wolne miejsce w pamięci urządzenia.');
+    throw error.conflict ? error : new Error(t.nieUdaloSieZapisacSprawdzCzy);
   } finally {
     saving = false;
   }
 }
 
-async function commit(update,target,message = 'Zapisano') {
+async function commit(update,target,message = t.zapisano,open = false) {
   const saved = await write(update);
   if (!saved) return false;
   const {before,after} = saved;
-  complete(target);
+  releaseScreenLock();
+  if (open) enter(target);
+  else complete(target);
   notify(message,async () => {
     if (data !== after) return;
     if (screen.form && !await discard()) return;
@@ -153,14 +197,14 @@ async function commit(update,target,message = 'Zapisano') {
       data = restored;
       dirty = false;
       render(false,false);
-      notify('Cofnięto zmianę');
+      notify(t.cofnietoZmiane);
     } catch (error) {
       if (error.conflict) {
         data = await loadData(db);
         dirty = false;
         render(false,false);
       }
-      notify(error.message || 'Nie udało się cofnąć zmiany.');
+      notify(error.message || t.nieUdaloSieCofnacZmiany);
     }
   });
   return true;
@@ -171,13 +215,16 @@ async function exportBackup(share) {
   const today = isoDate();
   const name = 'kurnik-kopia-' + today + '.json';
   const file = new File([encodeBackup(data,today)],name,{type:'application/json'});
-  if (share && navigator.canShare?.({files:[file]})) {
-    try { await navigator.share({files:[file]}); }
-    catch (error) {
-      if (error.name === 'AbortError') return;
-      throw new Error('Nie udało się udostępnić pliku. Użyj przycisku „Eksportuj kopię”.');
-    }
-  } else {
+  let shared = false;
+  if (share) {
+    try {
+      if (navigator.canShare?.({files:[file]}) && navigator.share) {
+        await navigator.share({files:[file]});
+        shared = true;
+      }
+    } catch (error) { if (error.name === 'AbortError') return; }
+  }
+  if (!shared) {
     const url = URL.createObjectURL(file);
     const anchor = Object.assign(document.createElement('a'),{href:url,download:name});
     document.body.append(anchor);
@@ -189,16 +236,16 @@ async function exportBackup(share) {
   if (!saved) return;
   dirty = false;
   render(false,false);
-  notify('Wyeksportowano kopię');
+  notify(t.wyeksportowanoKopie);
 }
 
 async function importBackup(file) {
-  if (file.size > 50000000) throw new FieldError('', 'Kopia jest większa niż 50 MB.');
+  if (file.size > 50000000) throw new FieldError('', t.kopiaJestWiekszaNiz50Mb);
   let imported;
   try { imported = decodeBackup(await file.text()); }
   catch (error) { throw new FieldError('',error.message); }
-  const accepted = await confirm('Zastąpić dane?',
-    'Wszystkie obecne wpisy i ustawienia zostaną zastąpione danymi z pliku.', 'Importuj');
+  const accepted = await confirm(t.zastapicDane,
+    t.wszystkieObecneWpisyIUstawieniaZostana, t.importuj);
   if (!accepted) return;
   const saved = await write(next => {
     for (const key of stores) next[key] = imported[key];
@@ -206,7 +253,7 @@ async function importBackup(file) {
   if (!saved) return;
   dirty = false;
   render(false,false);
-  notify('Przywrócono kopię');
+  notify(t.przywroconoKopie);
 }
 
 function report(error) {
@@ -221,7 +268,7 @@ function report(error) {
     if (parent) parent.hidden = false;
   }
   if (screen?.form) showFormError(error);
-  else notify(error.message || 'Wystąpił błąd.');
+  else notify(error.message || t.cosPoszloNieTakSprobujJeszcze);
 }
 
 function clearErrors() {
@@ -342,8 +389,9 @@ async function initialize() {
     historyIndex = history.state?.kurnik ?? 0;
     if (history.state?.route !== route) history.replaceState({kurnik:historyIndex,route},'','#' + route);
     render(false);
-  } catch {
-    app.innerHTML = '<main class="page"><section class="error-panel"><h1>Kurnik</h1><p>Nie udało się otworzyć lokalnej bazy danych. Otwórz aplikację w Chrome pod adresem HTTPS i sprawdź ustawienia pamięci witryn.</p></section></main>';
+  } catch (error) {
+    const message = error.message === t.conflict ? t.conflict : t.nieUdaloSieOtworzycDanychOtworz;
+    app.innerHTML = `<main class="page"><section class="error-panel"><h1>${t.appName}</h1><p>${message}</p></section></main>`;
     return;
   }
   navigator.storage?.persist?.().catch(() => {});
@@ -352,7 +400,7 @@ async function initialize() {
       registration.update().catch(() => {});
       function announceWaiting() {
         if (registration.waiting && navigator.serviceWorker.controller) {
-          notify('Dostępna aktualizacja. Zamknij i otwórz ponownie Kurnik.');
+          notify(t.jestNowaWersjaZamknijKurnikI);
         }
       }
       announceWaiting();
@@ -364,6 +412,7 @@ async function initialize() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  syncScreenLock();
   if (!document.hidden && data && !dirty && !busy && displayedDate !== isoDate()) render(false,false);
 });
 
