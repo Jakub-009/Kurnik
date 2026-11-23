@@ -1,3 +1,5 @@
+import {t} from './texts.js';
+
 const locale = 'pl-PL';
 const numberFormats = new Map();
 const plural = new Intl.PluralRules(locale);
@@ -5,6 +7,7 @@ const dateFormats = {
   short: new Intl.DateTimeFormat(locale, {day:'2-digit', month:'2-digit', timeZone:'UTC'}),
   full: new Intl.DateTimeFormat(locale, {day:'2-digit', month:'2-digit', year:'numeric', timeZone:'UTC'}),
   heading: new Intl.DateTimeFormat(locale, {weekday:'long', month:'long', day:'numeric', timeZone:'UTC'}),
+  month: new Intl.DateTimeFormat(locale, {month:'2-digit', year:'2-digit', timeZone:'UTC'}),
 };
 const moneyFormat = new Intl.NumberFormat(locale, {style:'currency', currency:'PLN', useGrouping:'always'});
 
@@ -33,11 +36,6 @@ export function stockQuantity(value, unit, signed = false) {
   return sign + digits + ' ' + unit;
 }
 
-export const cohortOrigins = {purchase:'Zakup', rearing:'Odchów', initial:'Stan początkowy'};
-export const cohortStatuses = {young:'Młode', laying:'Nioski', retired:'Wycofane'};
-export const lossReasons = {died:'Padła', culled:'Wybrakowana', slaughter:'Ubój'};
-export const flockEvents = {add:'Nowe ptaki', loss:'Ubytek', status:'Zmiana statusu', correction:'Korekta liczby'};
-
 export function editable(value, digits = 3) {
   return value == null ? '' : number(value, digits).replace(/\s/g, '');
 }
@@ -55,14 +53,20 @@ export function counted(value, forms) {
   return number(integer) + ' ' + forms[plural.select(integer)];
 }
 
-export const days = value => counted(value, {one:'dzień', few:'dni', many:'dni', other:'dni'});
-export const birds = value => counted(value, {one:'ptak', few:'ptaki', many:'ptaków', other:'ptaka'});
-export const hens = value => counted(value, {one:'kura', few:'kury', many:'kur', other:'kury'});
-export const roosters = value => counted(value, {one:'kogut', few:'koguty', many:'kogutów', other:'koguta'});
+export const days = value => counted(value, t.forms.days);
+export const birds = value => counted(value, t.forms.birds);
+export const hens = value => counted(value, t.forms.hens);
+export const roosters = value => counted(value, t.forms.roosters);
+export const batchCount = value => counted(value, t.forms.batches);
 
 export function age({months, minimum}) {
   const years = Math.floor(months / 12);
-  const yearLabel = years ? counted(years, {one:'rok', few:'lata', many:'lat', other:'roku'}) : '';
-  const monthLabel = !years || months % 12 ? number(months % 12) + ' mies.' : '';
-  return (minimum ? 'co najmniej ' : '') + [yearLabel, monthLabel].filter(Boolean).join(' ');
+  const yearLabel = years ? counted(years, t.forms.years) : '';
+  const monthLabel = !years || months % 12 ? number(months % 12) + ' ' + t.months : '';
+  return (minimum ? t.atLeast + ' ' : '') + [yearLabel, monthLabel].filter(Boolean).join(' ');
 }
+
+// Masa receptury i inne dokładne masy: do 2 miejsc, bez zbędnych zer („49,5 kg”).
+export const preciseMass = grams => number(grams / 1000, 2) + ' kg';
+export const precise = (value, unit) => number(value, unit === 'l' ? 3 : 2) + ' ' + unit;
+export const monthYear = value => dateFormats.month.format(new Date(value));

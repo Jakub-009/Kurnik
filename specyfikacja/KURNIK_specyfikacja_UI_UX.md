@@ -1,7 +1,7 @@
 # KURNIK — specyfikacja UI/UX
 
-Wersja: 3.0 (wersja do budowy, tylko dla właściciela) · 22.11.2026
-Dokument towarzyszący: `KURNIK_specyfikacja_funkcjonalna.md` (wersja 4.0)
+Wersja: 4.0 (stan aplikacji 1.5.0, tylko dla właściciela) · 23.11.2026
+Dokument towarzyszący: `KURNIK_specyfikacja_funkcjonalna.md` (wersja 5.0)
 
 ---
 
@@ -14,7 +14,7 @@ Język Material 3 (Material You) ze stałą, własną paletą: kremowe tło, zie
 - Font systemowy (na Androidzie Roboto), bez pobierania.
 - Tylko jasny motyw.
 
-Wzorzec wizualny: widok D na płótnie makiet (sekcja 11).
+Wzorzec wizualny: widok D na płótnie makiet (sekcja 11). Ikony: Lucide (sekcja 6).
 
 ---
 
@@ -23,9 +23,10 @@ Wzorzec wizualny: widok D na płótnie makiet (sekcja 11).
 1. **Prosto i bez funkcji dla funkcji.** Każdy element ekranu odpowiada na jedno z pytań ze specyfikacji funkcjonalnej.
 2. **Używane w kurniku i przy mieszalniku:** jedna ręka, czasem rękawice. Elementy dotykowe co najmniej 48 px, główne akcje 56–64 px, ważne przyciski w dolnej połowie ekranu.
 3. **Czytelność w słońcu:** jasny motyw, kontrast tekstu co najmniej 4,5:1.
-4. **Prognoza nigdy nie udaje pomiaru:** zawsze „≈” i podpis „prognoza”.
-5. **Bez okienek „Czy na pewno?”** przy zapisie i usuwaniu; zamiast nich snackbar z „Cofnij”. Wyjątki: porzucenie niezapisanego formularza i import kopii.
-6. **Rozsądne wartości domyślne:** dzisiejsza data, aktualna receptura, ostatnia cena.
+4. **Prognoza nigdy nie udaje pomiaru:** zawsze „≈”.
+5. **Bez okienek „Czy na pewno?”** przy zapisie i usuwaniu; zamiast nich snackbar z „Cofnij”. Wyjątki: porzucenie niezapisanego formularza, import kopii, zapis partii bez odhaczenia wszystkiego, pytanie o zakończenie poprzedniej partii.
+6. **Rozsądne wartości domyślne:** dzisiejsza data, aktualna receptura, ostatnia cena, masa ostatniej partii, ostatni wybór „Zakup / Własny” dla składnika.
+10. **Jedna główna akcja na ekranie:** pełny zielony przycisk w formularzu albo FAB na ekranie listy. Akcje drugorzędne: przyciski tonalne. Akcje poboczne: sam tekst (z ikoną).
 7. **Jeden ekran, jedno zadanie.** Formularze na pełnym ekranie, bez paska nawigacji.
 8. **Natychmiastowe działanie:** wszystko z pamięci telefonu, bez wskaźników ładowania.
 9. **Koszty tylko wtedy, gdy są ceny.** Bez cen ekran nie pokazuje pustych pól kosztów ani „0 zł”.
@@ -39,11 +40,11 @@ Stała paleta opisana rolami Material 3. W kodzie tylko nazwy ról. Wszystkie pa
 | Rola | Wartość | Tekst na niej | Użycie |
 | --- | --- | --- | --- |
 | primary | #2E6B36 | #FFFFFF | główny przycisk formularza, wyróżnione liczby, aktywne pole |
-| primaryContainer | #B2F2B0 | #00210A | FAB „Mieszam” |
+| primaryContainer | #B2F2B0 | #00210A | FAB |
 | secondaryContainer | #D5E8CF | #101F0F | przyciski tonalne, wybrane chipy, wskaźnik w pasku nawigacji, kółka ikon |
 | secondary | #52634F | #FFFFFF | ikony drugorzędne |
-| tertiaryContainer | #FFDEA6 | #261900 | baner „Do uzupełnienia”, „Sprawdź stan”, przypomnienie o kopii |
-| tertiary | #7A5900 | #FFFFFF | tekst i ikony ostrzeżeń, pasek prognozy poniżej progu |
+| tertiaryContainer | #FFDEA6 | #261900 | przypomnienie o kopii |
+| tertiary | #7A5900 | #FFFFFF | tekst i ikony ostrzeżeń („Kończy się”, „Sprawdź stan”), pasek i liczba prognozy poniżej progu |
 | errorContainer | #FFDAD6 | #410002 | błąd zapisu lub importu |
 | error | #BA1A1A | #FFFFFF | tekst błędu pod polem |
 | surface | #FBF8F1 | #1C1C17 | tło ekranu |
@@ -67,7 +68,7 @@ Font systemowy (`Roboto, system-ui, sans-serif`), skala Material 3, liczby z `fo
 
 | Styl | Rozmiar / interlinia | Grubość | Użycie |
 | --- | --- | --- | --- |
-| Display Small | 36 / 44 px | 400 | główna liczba na karcie (np. ≈ 63 kg) |
+| Display Small | 36 / 44 px | 400, kolor primary | główna liczba na karcie (np. ≈ 63 kg · ≈ 17 dni); nigdy czarna ani pogrubiona |
 | Headline Small | 24 / 32 px | 400 | ilości na ekranie „Mieszam” |
 | Title Large | 22 / 28 px | 400 | tytuł górnego paska |
 | Title Medium | 16 / 24 px | 500 | nagłówki kart i sekcji |
@@ -91,7 +92,6 @@ Tekst mieści się przy powiększonym foncie systemowym do 130%: kontenery z tek
 | Element dotykowy | minimum 48 × 48 px |
 | Przycisk główny formularza | 56 px, pełna szerokość |
 | FAB rozszerzony | 56 px, 16 px od prawej krawędzi, nad paskiem nawigacji |
-| Klawisze klawiatury numerycznej | 56–64 px |
 | Pozycja listy | 56 px (jedna linia), 64–72 px (dwie linie) |
 | Cienie | tylko FAB i snackbar: 0 2px 6px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12) |
 
@@ -101,26 +101,29 @@ Tekst mieści się przy powiększonym foncie systemowym do 130%: kontenery z tek
 
 | Komponent | Wygląd i zachowanie | Gdzie |
 | --- | --- | --- |
-| Górny pasek | tytuł + opcjonalny podtytuł; po prawej ikona ustawień; w formularzach po lewej „Zamknij” (×), w szczegółach „Wróć” (←) | każdy ekran |
+| Górny pasek | tytuł + opcjonalny podtytuł; po prawej ikona ustawień; w formularzach po lewej „Zamknij” (×), w szczegółach „Wróć” (←). Tytuł dostaje fokus po zmianie ekranu, bez widocznego obrysu | każdy ekran |
 | Pasek nawigacji | 4 zakładki z ikoną i etykietą, wskaźnik secondaryContainer | ekrany główne |
-| FAB rozszerzony | primaryContainer, ikona i etykieta, jeden na ekran | Start i Pasza: „Mieszam”; Magazyn: „Zakup”; Stado: „Dodaj rocznik” |
-| Przycisk wypełniony | primary, pełna szerokość, 56 px, jeden na ekran | zatwierdzenie formularza |
-| Przycisk tonalny | secondaryContainer, 48 px | „Korekta stanu”, „Zakończ partię”, akcje drugorzędne |
-| Przycisk tekstowy | tekst w kolorze primary, 48 px | „Zmień”, „Cofnij”, „Sprawdź” |
-| Chip wyboru | obramowanie outline; wybrany: secondaryContainer + ✓ | masa partii (50 / 100 kg / inna), data, receptura |
-| Pole liczby z klawiaturą | duża liczba w polu na pełną szerokość, puste na starcie; pod spodem klawiatura 3 × 4 (1–9, przecinek, 0, ⌫); jednostka obok liczby | ilości, masy, stany, liczba ptaków |
-| Pole tekstowe | wypełnione, etykieta nad wartością, błąd pod spodem | nazwy, ceny, uwagi |
-| Wiersz wartości | etykieta, wartość i „Zmień” w jednej linii 48 px | data, cena, receptura |
-| Karta | tło surfaceContainerLow lub surfaceContainer, 16 px, bez cienia | partia w użyciu, podsumowania |
-| Pozycja listy | ikona w kółku 40 px, tekst główny + pomocniczy, wartość po prawej; cała klikalna | składniki, receptury, partie, roczniki |
-| Lista kontrolna | pozycja 56 px z polem do odhaczenia; odhaczona przekreślona i przyciemniona; ilość dużą czcionką po prawej | ekran „Mieszam” |
-| Pasek prognozy | poziomy pasek z „≈ N dni” i datą wyczerpania, podpis „prognoza”; poniżej progu kolor tertiary i ikona ⚠ | magazyn, ekran startowy |
-| Baner ostrzeżenia | tertiaryContainer, ikona ⚠, tytuł, opis, przycisk tekstowy | „Do uzupełnienia”, „Sprawdź stan”, przypomnienie o kopii |
+| FAB rozszerzony | primaryContainer, ikona i etykieta, jeden na ekran | Pasza: „Mieszam”; Magazyn: „Dodaj”; Stado: „Dodaj rocznik”. Start bez FAB |
+| Przycisk wypełniony | primary, pełna szerokość, 56 px, jeden na ekran | zapis formularza |
+| Przycisk tonalny | secondaryContainer, 48 px | akcje drugorzędne: „Zakończ i mieszaj nową”, „Mieszam” i „Edytuj” w recepturze, „Dodaj” i „Korekta stanu” w składniku, „Zmień liczbę”, „Zrób kopię” |
+| Przycisk tekstowy | tekst w kolorze primary, opcjonalnie z ikoną, 48 px | akcje poboczne: „Zakończ partię”, „Dodaj składnik”, „Dodaj recepturę”, „Edytuj”, „Zmień”, „Cofnij” |
+| Przełącznik wyboru | 2 przyciski obok siebie w jednej ramce, wybrany secondaryContainer + ✓ (pod spodem pola radio) | Zakup / Własny, Kury / Koguty, Zakup / Wyklucie, Ubyło / Przybyło, rodzaj składnika |
+| Chip wyboru | obramowanie outline; wybrany: secondaryContainer + ✓ | masa (50 kg / 100 kg / Inna), receptura, podpowiedzi uwagi |
+| Pole liczby | duża liczba w polu na pełną szerokość, jednostka po prawej, klawiatura numeryczna telefonu (`inputmode`) | ilości, masy, stany, liczba ptaków |
+| Pole tekstowe | etykieta nad polem, błąd pod spodem | nazwy, ceny, uwagi |
+| Wiersz wartości | etykieta, wartość i „Zmień” w jednej linii 48 px | data |
+| Karta | tło surfaceContainerLow, 16 px, bez cienia | podsumowania |
+| Karta Start | tytuł, duża liczba (Display Small, primary), jedna linijka podpisu; cała karta klikalna | ekran Start |
+| Pozycja listy | tekst główny + pomocniczy, wartość po prawej; cała klikalna. Ikona w kółku tylko przy recepturach, partiach i rocznikach; **składniki bez ikon** | listy |
+| Lista do odważenia | pozycja 56 px z polem do odhaczenia, dodatki z oznaczeniem „Dodatek”; odhaczona przekreślona; ilość dużą czcionką i ołówek | ekran „Mieszam” |
+| Pasek prognozy | „≈ N dni” i „skończy się ok. …”, pasek 7 px; poniżej progu kolor tertiary i ikona ostrzeżenia | magazyn |
+| Wykres zużycia | słupki SVG w kolorze primary, wartości i podpisy (miesiąc i rok) w onSurfaceVariant, bez biblioteki | ekran Pasza, od 3 zakończonych partii |
+| Baner | tertiaryContainer, ikona ostrzeżenia, tytuł, opis, przycisk | przypomnienie o kopii |
 | Snackbar | inverseSurface, tekst + „Cofnij”, 5 s | po zapisie, edycji i usunięciu |
-| Okno dialogowe | tytuł, jedno zdanie, dwa przyciski tekstowe | porzucenie zmian, import kopii |
-| Stan pusty | jedno zdanie + jeden przycisk | listy bez danych |
+| Okno dialogowe | tytuł, jedno zdanie, dwa przyciski | porzucenie zmian, import kopii, mieszanie |
+| Stan pusty | jedno zdanie (+ przycisk, gdy na ekranie nie ma FAB) | listy bez danych |
 
-Ikony: Material Symbols Outlined (Apache 2.0) jako wbudowane SVG, tylko używane, zapisane w repozytorium.
+**Ikony: Lucide** (lucide.dev, licencja ISC, plik `icons/LUCIDE-LICENSE`), wklejone jako SVG w `ui/icons.js`: 24 × 24, bez wypełnienia, linia 2, zaokrąglone końce i łączenia. Użyte: `house`, `settings`, `pencil`, `plus`, `arrow-left`, `x`, `chevron-right`, `triangle-alert`, `check`, `download`, `share-2`, `grip-vertical`, `scroll-text`, `trash-2`. Trzy ikony narysowane w tym samym stylu: **worek** (Pasza), **paleta z workami** (Magazyn), **kura** z profilu (Stado).
 
 ---
 
@@ -128,37 +131,35 @@ Ikony: Material Symbols Outlined (Apache 2.0) jako wbudowane SVG, tylko używane
 
 Pasek nawigacji: **Start, Pasza, Magazyn, Stado.** Ustawienia pod ikoną w górnym pasku.
 
-| Ekran | Zawartość | Etap |
-| --- | --- | --- |
-| Start | sekcja 8 | 1 (stado od 2) |
-| Pasza | karta partii w użyciu (receptura, dzień, ≈ ile zostało, przycisk „Zakończ partię”); na ile starcza 100 kg; lista receptur (aktualna oznaczona); lista partii (najnowsze u góry); FAB „Mieszam” | 1 |
-| Receptura | nazwa, składniki z ilościami, proporcje (% i ilość na 100 kg), masa; koszt 100 kg i 1 kg, jeśli są ceny; „Ustaw jako aktualną”, „Edytuj” | 1 (koszt od 2) |
-| Edycja receptury | nazwa, lista składników (składnik, ilość, jednostka), „Dodaj składnik”, uwagi | 1 |
-| Mieszam | chipy receptury i masy (50 kg / 100 kg / Inna); lista kontrolna składników z ilościami; „Zatwierdź partię”; po zatwierdzeniu pytanie o zakończenie poprzedniej partii | 1 |
-| Partia | skład, daty, masa, pozostałość; wyniki: zużycie dziennie, na ile starcza 100 kg, g na ptaka (od etapu 2), koszt (jeśli są ceny) | 1 |
-| Zakończ partię | data zakończenia (domyślnie dziś), pozostałość w kg (domyślnie 0), podgląd wyników | 1 |
-| Magazyn | baner „Do uzupełnienia”; lista składników: stan i pasek prognozy (≈ dni, data wyczerpania), posortowana od najkrótszej prognozy; FAB „Zakup” | 1 |
-| Składnik | stan, prognoza, ostatnia cena; przyciski „Zakup”, „Korekta stanu”, „Inne pobranie”; historia ruchów | 1 |
-| Zakup | składnik, data, ilość (pole liczby), cena za kg albo łącznie (opcjonalnie) | 1 |
-| Korekta stanu | stan wyliczony, pole „Jest faktycznie”, różnica przed zapisem | 1 |
-| Inne pobranie | składnik, data, ilość, uwaga | 1 |
-| Stado | karta: razem, kury, koguty; lista roczników (nazwa, oznaczenie, liczba, wiek); FAB „Dodaj rocznik” | 2 |
-| Rocznik | nazwa, kategoria, liczba, data zakupu lub wyklucia, wiek, oznaczenie, historia zmian liczby; „Zmień liczbę” | 2 |
-| Ustawienia | próg „Do uzupełnienia”, zużycie domyślne, cena gotowej paszy, eksport kopii, import kopii, data ostatniego eksportu | 1 |
+| Ekran | Zawartość |
+| --- | --- |
+| Start | sekcja 8 |
+| Pasza | karta „Pasza w użyciu” (receptura, masa, „≈ kg · ≈ dni”, daty, „Zakończ i mieszaj nową”, „Zakończ partię”); na ile starcza 100 kg; wykres zużycia; receptury (masa „49,5 kg”, aktualna oznaczona); partie; FAB „Mieszam” |
+| Receptura | masa, składniki z % i ilością na 100 kg, dodatki z dawką na 100 kg; koszt (jeśli są ceny); „Mieszam”, „Edytuj”, „Zmień kolejność”, „Ustaw jako aktualną” |
+| Edycja receptury | nazwa, pozycje (składnik, ilość), „Dodaj pozycję”, „Nowy składnik”, uwagi |
+| Mieszam | receptura; masa 50 kg / 100 kg / Inna; lista do odważenia ze składnikami i dodatkami; daty; „Zapisz partię”. Ekran nie gaśnie |
+| Partia | masa i dodatki, daty (z ostatnim dniem karmienia), pozostałość, wyniki, skład, koszt |
+| Zakończ partię | ostatni dzień karmienia (domyślnie dziś), pozostałość, podgląd wyników |
+| Magazyn | karta „Wpisz stany” przy pierwszym uruchomieniu; składniki ze stanem i paskiem prognozy, od najkrótszej prognozy; FAB „Dodaj” |
+| Składnik | „Powinno być”, prognoza, ostatnia cena; „Dodaj”, „Korekta stanu”, „Inne pobranie”, „Edytuj”; „Ile dokupić”; historia |
+| Dodaj do magazynu | składnik, Zakup / Własny, ilość, cena (tylko zakup), data, uwagi |
+| Korekta stanu | „Powinno być”, pole „Ile jest naprawdę”, różnica przed zapisem |
+| Stado | karta „Razem” (liczba ptaków, w tym kur i kogutów); roczniki; FAB „Dodaj rocznik” |
+| Rocznik | liczba, kury/koguty, data, wiek, oznaczenie, historia zmian liczby; „Zmień liczbę”, „Edytuj” |
+| Zmień liczbę | Ubyło / Przybyło, ile sztuk, data, uwaga z podpowiedziami |
+| Ustawienia | próg ostrzeżenia, zużycie domyślne, cena gotowej paszy, kopia danych, numer wersji |
 
 ---
 
 ## 8. Ekran startowy
 
-Kolejność od góry, bez przewijania przy foncie 100%:
+Bez przewijania przy foncie 100%. Trzy karty o tej samej budowie (tytuł, duża zielona liczba, jedna linijka podpisu, cała karta klikalna):
 
-1. **Górny pasek:** „Kurnik”, dzień tygodnia i data, ikona ustawień.
-2. **Karta „Pasza w użyciu”:** nazwa receptury, dzień partii, „≈ 63 kg · ≈ 17 dni” (Display Small, podpis „prognoza”). Gdy nie ma partii: „Brak partii w użyciu” i przycisk „Mieszam”.
-3. **Baner „Do uzupełnienia”** (tylko gdy jest powód): lista składników z dniami, np. „Soja ≈ 12 dni”.
-4. **Magazyn w skrócie:** 3 składniki z najkrótszą prognozą, z paskami prognozy; przycisk tekstowy „Cały magazyn”.
-5. **Stado** (od etapu 2): „30 ptaków: 25 kur, 5 kogutów”.
-6. **Przypomnienie o kopii** (gdy ostatni eksport był ponad 30 dni temu).
-7. **FAB „Mieszam”.**
+1. **Pasza w użyciu:** „≈ 63 kg · ≈ 17 dni”, podpis: receptura i dzień karmienia. Bez partii: „Brak mieszanki w użyciu” i przycisk tonalny „Mieszam”.
+2. **Najbliższy brak:** „≈ N dni”, podpis: składnik i „skończy się ok. …”. Poniżej progu liczba w kolorze tertiary z ikoną ostrzeżenia. Bez wpisanych stanów: „Wpisz, ile masz poszczególnych składników, żeby zobaczyć, na ile wystarczą.” i „Wpisz stany”.
+3. **Stado:** liczba ptaków, podpis „N kur, N kogutów”. Bez roczników: „Dodaj pierwszy rocznik”.
+
+Pod kartami tylko przypomnienie o kopii (po 30 dniach) z przyciskiem „Zrób kopię”. Bez FAB, bez listy magazynu.
 
 ---
 
@@ -167,27 +168,33 @@ Kolejność od góry, bez przewijania przy foncie 100%:
 - **Zapis** zamyka formularz i pokazuje snackbar „Zapisano · Cofnij” na 5 s.
 - **Edycja:** dotknięcie pozycji otwiera ten sam formularz z danymi. **Usuwanie:** „Usuń” w formularzu edycji, potem snackbar z „Cofnij”.
 - **Przycisk wstecz Androida** zamyka formularz; przy niezapisanych zmianach pyta „Odrzucić zmiany?”.
-- **Liczby:** pole liczby z klawiaturą numeryczną (z przecinkiem), puste na starcie. Ceny w polu tekstowym z klawiaturą dziesiętną systemu; przecinek i kropka działają tak samo.
-- **Korekta stanu:** stan wyliczony, pole „Jest faktycznie”, podgląd różnicy, „Zapisz”.
-- **Mieszanie:** odhaczanie jest tylko pomocą przy mieszalniku. „Zatwierdź partię” działa także bez odhaczenia wszystkiego; wtedy pyta jednym zdaniem „Nie wszystkie składniki są odhaczone. Zatwierdzić?”.
-- **Ujemny stan składnika:** oznaczenie „Sprawdź stan” przy składniku i baner na ekranie startowym z przyciskiem „Korekta stanu”.
+- **Liczby:** pole z klawiaturą numeryczną telefonu; przecinek i kropka działają tak samo.
+- **Korekta stanu:** „Powinno być”, pole „Ile jest naprawdę”, podgląd różnicy, „Zapisz”.
+- **Mieszanie:** odhaczanie jest tylko pomocą. „Zapisz partię” działa bez odhaczenia wszystkiego; wtedy jedno pytanie „Nie wszystko jest odhaczone. Zapisać partię?”.
+- **Zakończ i mieszaj nową:** jedno dotknięcie kończy partię i otwiera „Mieszam”; snackbar z „Cofnij”.
+- **Ujemny stan składnika:** oznaczenie „Sprawdź stan” przy składniku.
 - **Walidacja** przy polu w momencie zapisu.
 
 ---
 
 ## 10. Teksty i formaty
 
-Teksty krótkie, po polsku, standardowe pojęcia, tryb rozkazujący na przyciskach.
+Wszystkie teksty są w `ui/texts.js`. Zasady:
+
+- krótko i zwyczajnie, jak mówi się w gospodarstwie; tryb rozkazujący na przyciskach;
+- w komunikacie najpierw co się stało, potem co zrobić; jedno, najwyżej dwa krótkie zdania;
+- bez słów: „bazowy”, „wyliczony”, „powiązany”, „niespójny”, „dopuszczalny zakres”, „JSON”, „podawanie”, „szacunek uwzględnia”;
+- ta sama rzecz zawsze tak samo nazwana (słownik niżej).
 
 - Liczby: przecinek dziesiętny, spacja nierozdzielająca w tysiącach: 1 155 kg.
-- Masy: do 10 kg z dwoma miejscami po przecinku na ekranie „Mieszam” (2,48 kg), w pozostałych miejscach do 10 kg z jednym (3,7 kg), powyżej bez (1 155 kg).
+- Masy: na ekranie „Mieszam” zaokrąglone do 100 g (poniżej 5 kg do 50 g); masa receptury do dwóch miejsc bez zbędnych zer („49,5 kg”); stany magazynu do trzech miejsc.
 - Kwoty: „120,28 zł”, „1,20 zł/kg”.
 - Daty: w nagłówku „niedziela, 22 listopada”, na listach „22.11”, poza bieżącym rokiem „22.11.2025”.
 - Wiek: „1 rok 10 mies.”, „2 lata 3 mies.”, „5 mies.”.
 - Odmiana liczebników przez `Intl.PluralRules('pl')`: 1 dzień, 2 dni; 1 kura, 2 kury, 5 kur.
 - Formatowanie wyłącznie przez `Intl.NumberFormat('pl-PL')` i `Intl.DateTimeFormat('pl-PL')`.
 
-**Słownik:** składnik, receptura, proporcje, partia (jedna zmieszana porcja), mieszanka (gotowa pasza z partii), magazyn, stan, zakup, korekta stanu, inne pobranie, prognoza zapasu, do uzupełnienia, rocznik, stado.
+**Słownik:** składnik, dodatek (poza masą), receptura, proporcje, partia (jedna zmieszana porcja), mieszanka (pasza z partii), masa mieszanki (bez dodatków), karmienie, magazyn, zakup, własny, korekta stanu, inne pobranie, „Powinno być”, „Kończy się”, „Ile dokupić”, rocznik, stado, „Zmień liczbę”, kopia danych.
 
 ---
 
@@ -201,9 +208,10 @@ Teksty krótkie, po polsku, standardowe pojęcia, tryb rozkazujący na przyciska
 **Implementacja**
 1. `styles/tokens.css`: wartości z sekcji 3–5 jako zmienne nazwane jak w Material 3 (`--md-sys-color-primary` itd.). Żaden inny plik nie zawiera wartości hex.
 2. `styles/components.css`: jedna klasa na komponent z sekcji 6.
-3. `ui/`: funkcje JS dla powtarzalnych fragmentów (pole liczby z klawiaturą, snackbar z „Cofnij”, wzorzec korekty stanu, pasek prognozy).
+3. `ui/components.js`: funkcje JS dla powtarzalnych fragmentów (pole liczby, przełącznik wyboru, karta Start, pasek prognozy, baner).
 4. `ui/format.js`: jedyne miejsce formatowania liczb, mas, kwot, dat, wieku i odmiany liczebników.
-5. `ui/icons.js`: wybrane ikony Material Symbols jako SVG.
-6. Bezpieczne marginesy (`env(safe-area-inset-bottom)`) pod paskiem nawigacji w trybie samodzielnym.
+5. `ui/icons.js`: ikony Lucide i trzy narysowane w ich stylu.
+6. `ui/texts.js`: wszystkie teksty.
+7. Bezpieczne marginesy (`env(safe-area-inset-bottom)`) pod paskiem nawigacji w trybie samodzielnym.
 
 **Makiety:** płótno https://claude.ai/artifact/1tvnVZwrW34pL19bEUoXiD — obowiązuje styl widoku D (kolory, kształty, pasek, FAB, klawiatura). Treść makiet dotyczy wcześniejszego, szerszego zakresu (jaja, finanse) i nie jest wiążąca; ekrany powstają z tej specyfikacji.

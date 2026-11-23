@@ -1,5 +1,6 @@
 import {icon} from './icons.js';
 import * as fmt from './format.js';
+import {t} from './texts.js';
 
 export const html = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
@@ -14,6 +15,8 @@ export const link = (label, route, style = '', symbol = '') =>
 export const iconButton = (label, symbol, action) =>
   `<button class="icon-button" type="button" aria-label="${html(label)}" data-action="${html(action)}">${icon(symbol)}</button>`;
 
+export const textLink = (label, route, symbol = '') => link(label, route, 'text', symbol);
+
 export const fab = (label, route, symbol) =>
   `<a class="fab" href="#${html(route)}">${icon(symbol)}${html(label)}</a>`;
 
@@ -27,18 +30,33 @@ export function row({name, sub = '', value = '', symbol = '', route = '', action
   return `<div class="list-row">${content}</div>`;
 }
 
-export function forecast(value, threshold, today, compact = false) {
-  if (!value) return compact ? '' : '<small>Brak prognozy dla aktualnej receptury.</small>';
+export function forecast(value, threshold, today, unit = '', compact = false) {
+  if (!value) return compact ? '' : '<small>' + html(t.notInRecipe) + '</small>';
   const low = value.days < threshold;
-  const bar = `<progress class="forecast-track" aria-label="Prognoza zapasu względem progu" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
+  const bar = `<progress class="forecast-track" aria-hidden="true" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
   return `<span class="forecast ${low ? 'forecast--low' : ''}">
-    <span class="forecast-line"><strong>${low && !compact ? icon('warn') + ' ' : ''}${fmt.days(value.days)}</strong>${compact ? '' : `<span>${fmt.listDate(value.date, today)}</span>`}</span>
-    ${bar}<small>prognoza${compact ? ' · ' + fmt.listDate(value.date, today) : ''}</small></span>`;
+    <span class="forecast-line"><strong>${low ? icon('warn') + ' ' : ''}${t.approx} ${fmt.days(value.days)}</strong><span>${html(t.runsOutAround(fmt.listDate(value.date, today)))}</span></span>
+    ${bar}</span>`;
 }
 
-export const banner = (title, description, action = '', compact = false) =>
-  `<aside class="banner ${compact ? 'home-warning' : ''}">${icon('warn')}<div class="grow"><h2>${html(title)}</h2>
-    <p>${description}</p></div>${action}</aside>`;
+export const banner = (title, description, action = '') =>
+  `<aside class="banner">${icon('warn')}<div class="grow stack tight"><h2>${html(title)}</h2>
+    <p>${html(description)}</p>${action ? '<div>' + action + '</div>' : ''}</div></aside>`;
+
+// Karta ekranu Start: tytuł, duża liczba, jedna linijka podpisu. Cała karta prowadzi dalej.
+export function homeCard({title, value, caption = '', route = '', action = '', low = false}) {
+  const content = `<h2>${html(title)}</h2>${value ? `<p class="display${low ? ' display--low' : ''}">${low ? icon('warn') : ''}${value}</p>` : ''}
+    ${caption ? '<p class="muted">' + caption + '</p>' : ''}${action ? '<div>' + action + '</div>' : ''}`;
+  return route ? `<a class="card home-card stack tight" href="#${html(route)}">${content}</a>`
+    : `<section class="card home-card stack tight">${content}</section>`;
+}
+
+// Dwa lub trzy przyciski wyboru (jak przełącznik). Pod spodem zwykłe pola radio.
+export const choice = (name, legend, options, value) =>
+  `<fieldset class="field choice-field"><legend class="field-label">${html(legend)}</legend><div class="segmented">${options.map(([key, label]) =>
+    `<label><input type="radio" name="${html(name)}" value="${html(key)}"${key === value ? ' checked' : ''}><span>${icon('check')}${html(label)}</span></label>`).join('')}</div></fieldset>`;
+
+export const chosen = name => document.querySelector('input[name="' + name + '"]:checked')?.value;
 
 export const warning = label => `<span class="warning">${icon('warn')} ${html(label)}</span>`;
 export const empty = (message, action = '') => `<div class="card stack tight"><p>${html(message)}</p>${action ? '<div>' + action + '</div>' : ''}</div>`;
@@ -67,7 +85,7 @@ export const dateField = (name, label, value, min = '1900-01-01', max = '9999-12
   field(name, label, value, {type:'date', min, max});
 
 export const changeRow = (title, value, action) =>
-  `<div class="value-row"><span class="grow">${html(title)} <strong>${html(value)}</strong></span>${button('Zmień', action)}</div>`;
+  `<div class="value-row"><span class="grow">${html(title)} <strong>${html(value)}</strong></span>${button(t.change, action, 'text')}</div>`;
 
 export function numberField(name, label, value = '', unit = '', mode = 'decimal') {
   const input = `<div class="number-field"><input autocomplete="off" id="${name}"
@@ -76,11 +94,11 @@ export function numberField(name, label, value = '', unit = '', mode = 'decimal'
   return fieldWrap(name,label,input);
 }
 
-export const form = (content, submit = 'Zapisz', deletable = false) =>
+export const form = (content, submit = t.save, deletable = false) =>
   `<form class="screen-form" novalidate>${content}
     <p data-form-error class="error-panel" role="alert" hidden></p>
     <div class="form-actions"><button class="button button--filled" type="submit">${html(submit)}</button>
-      ${deletable ? button('Usuń', 'delete', 'danger', 'del') : ''}</div>
+      ${deletable ? button(t.delete, 'delete', 'danger', 'del') : ''}</div>
   </form>`;
 
 export class FieldError extends Error {
@@ -96,8 +114,7 @@ export function readNumber(value, name, {optional = false, min = 0, max = 100000
   const pattern = digits ? new RegExp('^(?:[0-9]+(?:\\.[0-9]{1,' + digits + '})?|\\.[0-9]{1,' + digits + '})$') : /^[0-9]+$/;
   const numeric = Number(text);
   if (!pattern.test(text) || numeric < min || numeric > max) {
-    const range = 'Podaj liczbę od ' + fmt.number(min, digits) + ' do ' + fmt.number(max, digits) + '.';
-    throw new FieldError(name, !text ? 'Uzupełnij to pole.' : range);
+    throw new FieldError(name, !text ? t.fillIn : t.numberRange(fmt.number(min, digits), fmt.number(max, digits)));
   }
   return numeric;
 }
@@ -109,14 +126,14 @@ export function validDate(value, min = '1900-01-01', max = '9999-12-31') {
 
 export function readDate(value, name, min, max) {
   if (!validDate(value, min, max)) {
-    throw new FieldError(name, 'Podaj datę z zakresu ' + fmt.fullDate(min ?? '1900-01-01') + ' – ' + fmt.fullDate(max ?? '9999-12-31') + '.');
+    throw new FieldError(name, t.dateRange(fmt.fullDate(min ?? '1900-01-01'), fmt.fullDate(max ?? '9999-12-31')));
   }
   return value;
 }
 
 export function readName(value, name = 'name') {
   const result = String(value ?? '').trim();
-  if (!result || result.length > 80) throw new FieldError(name, 'Podaj nazwę od 1 do 80 znaków.');
+  if (!result || result.length > 80) throw new FieldError(name, t.nameLength);
   return result;
 }
 

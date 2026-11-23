@@ -1,205 +1,284 @@
-import {batchBaseMass, batchOil, cohortAge, cohortEvents, cohortOrigin, cohortState, daysBetween, flockEventKind, isMixingOil, isRecipeAdditive, hasNewBatchAdditives, recipeUsesNewAdditives, mixtureCost, recipeComposition, savings} from './calc/index.js';
+import {addDays, batchAdditives, batchBaseMass, batchOil, cohortAge, cohortCount, cohortEvents, dailyHistory, daysBetween,
+  flockEventKind, isAdditive, mixtureCost, purchaseNeed, recipeComposition, roundPurchase, savings} from './calc/index.js';
 import {live} from './db.js';
-import {batchStats, find, latestFirst, showAmount} from './model.js';
-import {banner, button, details, empty, fab, forecast, html, link, row, warning} from '../ui/components.js';
+import {batchStats, find, isFinished, latestFirst, showAmount} from './model.js';
+import {banner, button, details, empty, fab, forecast, homeCard, html, link, row, textLink, warning} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
+import {t} from '../ui/texts.js';
 
-const symbol = {start:'home', feed:'feed', stock:'stock', flock:'flock'};
-const tabs = {start:'Start', feed:'Pasza', stock:'Magazyn', flock:'Stado'};
-const movementNames = {purchase:'Zakup', addition:'Dodanie zapasu', correction:'Korekta stanu',
-  withdrawal:'Inne pobranie', batch:'Zużycie w partii'};
+const symbol = {start:'home', feed:'sack', stock:'pallet', flock:'hen'};
+const approx = text => t.approx + ' ' + text;
 
 export function frame(screen, route) {
   const {title, subtitle = '', parent, form = false, body, floating = ''} = screen;
   const root = route.split('/')[0];
   const main = !parent;
-  const navigation = main ? `<nav class="navigation" aria-label="Nawigacja główna"><div class="tabs">${Object.entries(tabs)
+  const navigation = main ? `<nav class="navigation" aria-label="${t.mainNavigation}"><div class="tabs">${Object.entries(t.tabs)
     .map(([key, label]) => `<a href="#${key}"${root === key ? ' aria-current="page"' : ''}><span>${icon(symbol[key])}</span><span>${label}</span></a>`).join('')}</div></nav>` : '';
   return `<header class="app-bar">${parent ? `<button class="icon-button" type="button" data-action="back"
-    aria-label="${form ? 'Zamknij' : 'Wróć'}">${icon(form ? 'close' : 'back')}</button>` : ''}
+    aria-label="${form ? t.close : t.back}">${icon(form ? 'close' : 'back')}</button>` : ''}
     <div class="app-bar-text"><h1 tabindex="-1">${html(title)}</h1>${subtitle ? '<p class="eyebrow">' + html(subtitle) + '</p>' : ''}</div>
-    ${main ? `<a class="icon-button" aria-label="Ustawienia" href="#settings/${root}">${icon('settings')}</a>` : ''}</header>
+    ${main ? `<a class="icon-button" aria-label="${t.settings}" href="#settings/${root}">${icon('settings')}</a>` : ''}</header>
     <main class="page ${main ? 'page--main' : ''} ${form ? 'page--form' : ''}" id="content">${body}</main>${floating}${navigation}`;
 }
 
-function stockRows(stocks, ctx, compact = false) {
-  const threshold = ctx.derived.settings.threshold;
-  return '<div class="list">' + stocks.map(({ingredient,grams,known,outlook}) => {
-    const state = known ? fmt.stockQuantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania';
-    const notices = known && grams < 0 ? warning('Sprawdź stan') : outlook && outlook.days < threshold ? warning('Na wyczerpaniu') : '';
-    const projected = outlook ? forecast(outlook,threshold,ctx.today,compact) : '';
-    const item = row({name:ingredient.name,symbol:compact ? '' : 'stock',route:'ingredient/' + ingredient.id,
-      sub:[compact || !known ? html(state) : '',notices].filter(Boolean).join('<br>'),
-      value:compact ? projected : known ? `<strong class="stock-value">${state}</strong>` : ''});
-    return item + (projected && !compact ? '<div class="stock-projection">' + projected + '</div>' : '');
+const quantity = (grams, ingredient, signed = false) =>
+  fmt.stockQuantity(showAmount(grams, ingredient), ingredient.unit, signed);
+
+function firstUnknown(stocks) {
+  return stocks.find(row => !row.known)?.ingredient;
+}
+
+function enterStocksCard(stocks) {
+  const first = firstUnknown(stocks);
+  return `<section class="card stack tight"><p>${t.enterStocksInfo}</p>
+    ${first ? '<div>' + link(t.enterStocks, 'movement/correction/' + first.id, 'tonal') + '</div>' : ''}</section>`;
+}
+
+function stockRows(ctx) {
+  const {stocks, settings} = ctx.derived;
+  const anyKnown = stocks.some(row => row.known);
+  return '<div class="list">' + stocks.map(({ingredient, grams, known, outlook}) => {
+    const notice = known && grams < 0 ? warning(t.checkStock) : outlook && outlook.days < settings.threshold ? warning(t.runningOut) : '';
+    const sub = [known ? '' : anyKnown ? html(t.enterAmount) : '', isAdditive(ingredient) ? html(t.additive) : '', notice]
+      .filter(Boolean).join(' · ');
+    const item = row({name:ingredient.name, route:'ingredient/' + ingredient.id, sub,
+      value: known ? `<strong class="stock-value">${quantity(grams, ingredient)}</strong>` : ''});
+    return item + (outlook ? '<div class="stock-projection">' + forecast(outlook, settings.threshold, ctx.today) + '</div>' : '');
   }).join('') + '</div>';
 }
 
-function currentCard(ctx, home = false) {
-  const active = ctx.derived.active;
-  const heading = '<h2>Pasza w użyciu</h2>';
-  if (!active) return `<section class="card card--strong stack tight">${heading}<p>Brak partii w użyciu</p>
-    <div>${link('Mieszam', 'mix', 'tonal', 'plus')}</div></section>`;
-  const {batch, remaining} = active;
-  const {daily,openStatus} = ctx.derived;
-  const other = openStatus.length - 1;
-  return `<section class="card card--strong stack tight current-card">
-    <div class="current-heading">${heading}${home ? '' : link('Zakończ partię','finish/' + batch.id,'tonal')}</div>
-    <strong>${html(batch.recipeName)} · ${batchLabel(batch)}</strong>
-    <p class="muted">Partia z ${fmt.listDate(batch.date,ctx.today)} · podawanie od ${fmt.listDate(batch.start,ctx.today)}</p>
-    <p class="muted">Szacunek${daily > 0 ? ' przy zużyciu ' + fmt.number(daily / 1000,2) + ' kg/dzień' : ''}</p>
-    <dl class="detail-grid current-estimate">
-      <div><dt>Zostało</dt><dd>${fmt.mass(remaining)}</dd></div>
-      ${daily > 0 ? '<div><dt>Wystarczy na</dt><dd>' + fmt.days(remaining / daily) + '</dd></div>' : ''}
-    </dl>
-    ${remaining <= 0 ? '<p>' + warning('Sprawdź, czy partia jest jeszcze podawana.') + '</p>' : ''}
-    ${other ? '<p class="muted">Inne otwarte partie: ' + fmt.number(other) + '. Szacunek uwzględnia podawanie od najstarszej partii.</p>' : ''}
-    <div class="actions">${link('Szczegóły partii','batch/' + batch.id + (home ? '/start' : ''))}
-      ${home && other ? link('Lista partii','feed') : ''}</div></section>`;
+function batchLabel(batch) {
+  const additives = batchAdditives(batch);
+  const base = fmt.mass(batchBaseMass(batch));
+  if (!additives.length) return base;
+  const oil = batchOil(batch);
+  if (additives.length === 1 && (oil || additives[0].unit === 'l')) {
+    const item = oil ?? additives[0];
+    if (/^olej/iu.test(item.name)) return base + t.withOil(fmt.number(item.millilitres / 1000, 1) + ' l');
+  }
+  return base + t.withAdditives;
 }
 
-function flockText(flock) {
-  return `${fmt.birds(flock.total)} · ${fmt.hens(flock.hens)}, ${fmt.roosters(flock.roosters)}`;
+const feedingDay = (batch, today) => Math.max(1, Math.floor(daysBetween(batch.start, today)) + 1);
+
+function activeSummary(ctx) {
+  const {active, daily} = ctx.derived;
+  const {remaining} = active;
+  return approx(fmt.mass(remaining)) + (daily > 0 && remaining > 0 ? ' · ' + approx(fmt.days(remaining / daily)) : '');
+}
+
+function otherOpen(ctx) {
+  const count = ctx.derived.openStatus.length - 1;
+  return count > 0 ? t.otherOpen(count) : '';
 }
 
 export function start(ctx) {
   const {derived, today} = ctx;
-  const smallStock = derived.stocks.slice(0,3);
-  const last = derived.settings.lastExport;
-  const due = daysBetween(last ?? derived.settings.createdAt.slice(0,10), today) > 30;
-  return {title:'Kurnik', subtitle:fmt.headingDate(today), body:`<div class="stack">
-    ${currentCard(ctx, true)}
-    <section class="stack tight home-stock"><div class="section-head"><h2>Magazyn w skrócie</h2>${link('Cały magazyn', 'stock')}</div>
-      ${smallStock.length ? stockRows(smallStock, ctx, true) : empty('Nie ma składników w magazynie.')}</section>
-    <section class="card home-flock">${row({name:'Stado', sub:html(flockText(derived.flock)), symbol:'flock', route:'flock'})}</section>
-    ${due ? banner('Zapisz kopię zapasową', 'Od ostatniej kopii minęło ponad 30 dni.', link('Ustawienia', 'settings/start'), true) : ''}
-    </div>`};
+  const {active, stocks, flock, settings} = derived;
+  const cards = [];
+  if (active) {
+    const caption = active.remaining <= 0 ? warning(t.mixShouldBeGone)
+      : html(active.batch.recipeName + ' · ' + t.feedingDay(feedingDay(active.batch, today)));
+    const others = otherOpen(ctx);
+    cards.push(homeCard({title:t.feedInUse, value:html(activeSummary(ctx)), route:'batch/' + active.batch.id + '/start',
+      caption: caption + (others ? '<br>' + html(others) : '')}));
+  } else {
+    cards.push(homeCard({title:t.feedInUse, caption:html(t.noMixInUse), action:link(t.mix, 'mix', 'tonal', 'plus')}));
+  }
+  const nearest = stocks.find(row => row.outlook);
+  if (nearest) {
+    const {ingredient, outlook} = nearest;
+    cards.push(homeCard({title:t.nearestShortage, value:html(approx(fmt.days(outlook.days))), low:outlook.days < settings.threshold,
+      caption:html(ingredient.name + ' · ' + t.runsOutAround(fmt.fullDate(outlook.date))), route:'ingredient/' + ingredient.id}));
+  } else if (!stocks.some(row => row.known)) {
+    const first = firstUnknown(stocks);
+    cards.push(homeCard({title:t.nearestShortage, caption:html(t.enterStocksInfo),
+      action:first ? link(t.enterStocks, 'movement/correction/' + first.id, 'tonal') : ''}));
+  } else {
+    cards.push(homeCard({title:t.nearestShortage, value:html(t.noForecast), caption:html(t.noForecastInfo), route:'stock'}));
+  }
+  if (derived.cohorts.length) {
+    cards.push(homeCard({title:t.flock, value:html(fmt.birds(flock.total)), route:'flock',
+      caption:html(t.henCount(fmt.hens(flock.hens), fmt.roosters(flock.roosters)))}));
+  } else {
+    cards.push(homeCard({title:t.flock, action:link(t.addFirstCohort, 'cohort-form', 'tonal', 'plus')}));
+  }
+  const last = settings.lastExport;
+  const due = daysBetween(last ?? settings.createdAt.slice(0, 10), today) > 30;
+  return {title:t.appName, subtitle:fmt.headingDate(today), body:`<div class="stack">${cards.join('')}
+    ${due ? banner(t.backupTitle, last ? t.backupDue : t.backupNever, button(t.makeBackup, 'backup', 'tonal', 'share')) : ''}</div>`,
+    action(action) { if (action === 'backup') return ctx.exportBackup(true); }};
 }
 
-function oilVolume(item) {
-  return fmt.number(item.millilitres / 1000,3) + ' l';
+function currentCard(ctx) {
+  const {active, daily} = ctx.derived;
+  const heading = `<h2>${t.feedInUse}</h2>`;
+  if (!active) return `<section class="card stack tight">${heading}<p class="muted">${t.noMixInUse}</p></section>`;
+  const {batch, remaining} = active;
+  const others = otherOpen(ctx);
+  return `<section class="card stack tight current-card">${heading}
+    <a class="current-link" href="#batch/${html(batch.id)}"><strong>${html(batch.recipeName)} · ${html(batchLabel(batch))}</strong>
+      <p class="display">${html(activeSummary(ctx))}</p>
+      <p class="muted">${html(t.mixedOn(fmt.listDate(batch.date, ctx.today), fmt.listDate(batch.start, ctx.today)))}${daily > 0 ? ' · ' +
+        html(approx(t.perDay(fmt.number(daily / 1000, 1) + ' kg'))) : ''}</p></a>
+    ${remaining <= 0 ? '<p>' + warning(t.mixShouldBeGone) + '</p>' : ''}
+    ${others ? '<p class="muted">' + html(others) + '</p>' : ''}
+    <div class="actions">${button(t.finishAndMix, 'finish-and-mix:' + batch.id, 'tonal')}
+      ${textLink(t.finishBatch, 'finish/' + batch.id)}</div></section>`;
 }
 
-function batchLabel(batch) {
-  const oil = batchOil(batch);
-  if (hasNewBatchAdditives(batch)) return fmt.mass(batchBaseMass(batch)) + ' + dodatki';
-  return fmt.mass(batchBaseMass(batch)) + (oil ? ' + ' + oilVolume(oil) + ' oleju' : '');
+function usageChart(ctx) {
+  const rows = dailyHistory(ctx.derived.batches, addDays(ctx.today, 1));
+  if (rows.length < 3) return '';
+  const width = 320, height = 150, top = 18, bottom = 24, left = 4;
+  const max = Math.max(...rows.map(row => row.daily)) || 1;
+  const step = (width - left) / rows.length;
+  const bar = Math.min(28, step * .62);
+  const bars = rows.map((row, i) => {
+    const h = (height - top - bottom) * row.daily / max;
+    const x = left + step * i + (step - bar) / 2;
+    const y = height - bottom - h;
+    const kg = fmt.number(row.daily / 1000, 1);
+    return `<g><title>${html(fmt.monthYear(row.end) + ': ' + t.kgPerDay(kg))}</title>
+      <rect class="chart-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bar.toFixed(1)}" height="${h.toFixed(1)}" rx="3"/>
+      <text class="chart-value" x="${(x + bar / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}">${kg}</text>
+      <text class="chart-label" x="${(x + bar / 2).toFixed(1)}" y="${height - 6}">${fmt.monthYear(row.end)}</text></g>`;
+  }).join('');
+  return `<section class="card stack tight"><h2>${t.chartTitle}</h2>
+    <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${t.chartLabel}">
+      <line class="chart-axis" x1="0" x2="${width}" y1="${height - bottom}" y2="${height - bottom}"/>${bars}</svg></section>`;
 }
 
 export function feed(ctx) {
   const {derived, today} = ctx;
-  return {title:'Pasza', floating:fab('Mieszam','mix','plus'), body:`<div class="stack">
+  return {title:t.feed, floating:fab(t.mix, 'mix', 'plus'), body:`<div class="stack">
     ${currentCard(ctx)}
-    <section class="card"><h2>Na ile starcza 100 kg?</h2><p class="display">${derived.daily > 0 ? fmt.days(100000 / derived.daily) : 'Brak prognozy'}</p>
-      <small>${derived.daily > 0 ? 'prognoza · ' : ''}${fmt.number(derived.daily / 1000, 3)} kg dziennie</small></section>
-    <section class="stack tight"><div class="section-head"><h2>Receptury</h2>${link('Dodaj recepturę','recipe-form','', 'plus')}</div>
+    <section class="card stack tight"><h2>${t.howLong100}</h2><p class="display">${derived.daily > 0 ? approx(fmt.days(100000 / derived.daily)) : t.noForecast}</p>
+      <p class="muted">${html(approx(t.perDay(fmt.number(derived.daily / 1000, 1) + ' kg')))}</p></section>
+    ${usageChart(ctx)}
+    <section class="stack tight"><div class="section-head"><h2>${t.recipes}</h2>${textLink(t.addRecipe, 'recipe-form', 'plus')}</div>
       ${derived.recipes.length ? '<div class="list">' + derived.recipes.map(recipe => row({name:recipe.name,
-        symbol:'recipe', sub:recipe.current ? '<span class="tag">Aktualna</span>' : '',
-        value:fmt.mass(recipeComposition(recipe, derived.ingredients).mass), route:'recipe/' + recipe.id})).join('') + '</div>' :
-        empty('Dodaj recepturę, aby przeliczyć składniki na partię.')}</section>
-    <section class="stack tight"><h2>Partie</h2>${derived.batches.length ? '<div class="list">' + derived.batches.map(batch =>
-      row({name:batch.recipeName, symbol:'feed', sub:fmt.listDate(batch.date, today) + ' · ' +
-        (batch.end && batch.end <= today ? 'Zakończona' : batch.start > today ? 'Zaplanowana' : 'Otwarta'),
-        value:batchLabel(batch), route:'batch/' + batch.id})).join('') + '</div>' : empty('Nie zapisano jeszcze żadnej partii.')}</section>
-    </div>`};
+        symbol:'recipe', sub:recipe.current ? '<span class="tag">' + t.current + '</span>' : '',
+        value:fmt.preciseMass(recipeComposition(recipe, derived.ingredients).mass), route:'recipe/' + recipe.id})).join('') + '</div>' :
+        empty(t.noRecipes)}</section>
+    <section class="stack tight"><h2>${t.batches}</h2>${derived.batches.length ? '<div class="list">' + derived.batches.map(batch =>
+      row({name:batch.recipeName, symbol:'sack', sub:fmt.listDate(batch.date, today) + ' · ' +
+        (isFinished(batch, today) ? t.statusFinished : batch.start > today ? t.statusPlanned : t.statusOpen),
+        value:html(batchLabel(batch)), route:'batch/' + batch.id})).join('') + '</div>' : empty(t.noBatches)}</section>
+    </div>`,
+    async action(action) {
+      if (!action.startsWith('finish-and-mix:')) return;
+      const id = action.slice('finish-and-mix:'.length);
+      const end = addDays(today, 1);
+      if (await ctx.commit(data => Object.assign(find(data, 'batches', id), {end, remaining:0}), 'feed', t.batchFinished)) ctx.go('mix');
+    }};
 }
 
-function costRows(cost, settings, {batch = false, consumed, daily, estimated = false, title = 'Koszt mieszanki'} = {}) {
+function costRows(cost, settings, {batch = false, consumed, daily, estimated = false} = {}) {
   if (cost.kind === 'none') return '';
   const content = [];
-  const value = text => estimated ? text + ' <small>szacunek</small>' : text;
-  if (cost.kind === 'partial') content.push([title,'Brak danych']);
+  const value = text => estimated ? text + ' <small>' + t.estimate + '</small>' : text;
+  if (cost.kind === 'partial') content.push([t.cost, t.costPartial]);
   if (cost.kind === 'full') {
-    if (batch) content.push(['Koszt partii', fmt.money(cost.cents)]);
-    if (!batch) content.push(['Koszt 100 kg', fmt.money(cost.perKg * 100)]);
-    content.push(['Koszt kilograma', fmt.money(cost.perKg) + '/kg']);
-    if (daily != null) content.push(['Koszt dzienny', value(fmt.money(daily / 1000 * cost.perKg))]);
+    if (batch) content.push([t.costBatch, fmt.money(cost.cents)]);
+    else content.push([t.cost100, fmt.money(cost.perKg * 100)]);
+    content.push([t.costKg, fmt.money(cost.perKg) + t.perKgSuffix]);
+    if (daily != null) content.push([t.costDaily, value(fmt.money(daily / 1000 * cost.perKg))]);
     if (settings.readyPrice !== null) {
-      content.push(['Gotowa pasza', fmt.money(settings.readyPrice) + '/kg']);
-      if (batch && consumed != null && consumed > 0) {
+      content.push([t.readyFeed, fmt.money(settings.readyPrice) + t.perKgSuffix]);
+      if (batch && consumed > 0) {
         const difference = savings(consumed, settings.readyPrice, cost.perKg);
-        content.push([difference >= 0 ? 'Oszczędność' : 'Dopłata względem gotowej paszy', value(fmt.money(Math.abs(difference)))]);
+        content.push([difference >= 0 ? t.cheaperBy : t.dearerBy, value(fmt.money(Math.abs(difference)))]);
       }
       if (!batch) {
         const difference = savings(100000, settings.readyPrice, cost.perKg);
-        content.push([difference >= 0 ? 'Oszczędność na 100 kg' : 'Dopłata na 100 kg', fmt.money(Math.abs(difference))]);
+        content.push([difference >= 0 ? t.cheaper100 : t.dearer100, fmt.money(Math.abs(difference))]);
       }
     }
   }
-  return '<section class="card stack tight"><h2>' + title + '</h2>' + details(content) + '</section>';
+  return '<section class="card stack tight"><h2>' + t.cost + '</h2>' + details(content) + '</section>';
 }
 
 export function recipeView(ctx, id) {
   const recipe = find(ctx.data, 'recipes', id);
   if (!recipe) return missing('feed');
   const composition = recipeComposition(recipe, ctx.derived.ingredients);
-  const hasBase = composition.items.length > 0;
-  const precise = (value, unit) => fmt.number(value, unit === 'l' ? 3 : 2) + ' ' + unit;
-  const baseItems = new Map(composition.items.map(item => [item.ingredientId,item]));
-  const oils = new Map(ctx.derived.ingredients.filter(isRecipeAdditive).map(item => [item.id,item]));
-  const hasOil = recipe.items.some(item => oils.has(item.ingredientId));
-  const recipeRows = recipe.items.map(({ingredientId,amount}) => {
-    const oil = oils.get(ingredientId);
-    if (oil) return row({name:oil.name,symbol:'stock',sub:'<span class="tag">Dodatek</span>',value:precise(amount / 1000,oil.unit)});
-    const item = baseItems.get(ingredientId);
-    return row({name:item.name,symbol:'stock',sub:fmt.percent(item.share) + ' · ' +
-      precise(item.amount / 1000 * 100000 / composition.mass,item.unit) + ' na 100 kg',
-      value:precise(item.amount / 1000,item.unit)});
+  const byId = new Map([...composition.items, ...composition.additives].map(item => [item.ingredientId, item]));
+  const recipeRows = recipe.items.map(({ingredientId}) => {
+    const item = byId.get(ingredientId);
+    const per100 = fmt.precise(item.amount / 1000 * 100000 / composition.mass, item.unit);
+    if (item.additive) return row({name:item.name, sub:'<span class="tag">' + t.additive + '</span> ' + html(t.per100(per100)),
+      value:fmt.precise(item.amount / 1000, item.unit)});
+    return row({name:item.name, sub:html(fmt.percent(item.share) + ' · ' + t.per100(per100)),
+      value:fmt.precise(item.amount / 1000, item.unit)});
   }).join('');
   return {title:recipe.name, parent:'feed', body:`<div class="stack">
-    <section class="card stack tight"><h2>Receptura</h2>${hasBase ? '<p class="display">' + precise(composition.mass / 1000,'kg') + '</p>'
-        : '<p>Dodaj składniki bazowe do receptury.</p>'}
-      ${recipe.current ? '<div><span class="tag">Aktualna</span></div>' : ''}
+    <section class="card stack tight"><h2>${t.recipe}</h2><p class="display">${fmt.preciseMass(composition.mass)}</p>
+      ${recipe.current ? '<div><span class="tag">' + t.current + '</span></div>' : ''}
       ${recipe.notes ? '<p class="notes">' + html(recipe.notes) + '</p>' : ''}</section>
-    <section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${recipeRows}</div></section>
-    ${costRows(mixtureCost(composition.items),ctx.derived.settings,hasOil ? {title:'Koszt bazy'} : {})}
-    <div class="actions">${link('Edytuj', 'recipe-form/' + id, 'tonal', 'edit')}
-      ${recipe.items.length > 1 ? link('Zmień kolejność','recipe-order/' + id,'tonal') : ''}
-      ${recipe.current ? '' : button('Ustaw jako aktualną', 'current', 'tonal', 'check')}
-      ${hasBase && !recipeUsesNewAdditives(recipe,ctx.derived.ingredients) ? link('Mieszam','mix/' + id,'','plus') : ''}</div></div>`,
-    action: (action) => { if (action === 'current') ctx.commit(data => ctx.setCurrent(data, id)); }};
+    <div class="actions">${link(t.mix, 'mix/' + id, 'tonal', 'plus')}${link(t.edit, 'recipe-form/' + id, 'tonal', 'edit')}</div>
+    <section class="stack tight"><h2>${t.composition}</h2><div class="list">${recipeRows}</div></section>
+    ${costRows(mixtureCost([...composition.items, ...composition.additives]), ctx.derived.settings)}
+    <div class="actions">${recipe.items.length > 1 ? textLink(t.reorder, 'recipe-order/' + id) : ''}
+      ${recipe.current ? '' : button(t.setCurrent, 'current', 'text', 'check')}</div></div>`,
+    action: action => { if (action === 'current') return ctx.commit(data => ctx.setCurrent(data, id)); }};
 }
 
 export function batchView(ctx, id, fromEventId) {
   const batch = find(ctx.data, 'batches', id);
   if (!batch) return missing('feed');
-  const event = fromEventId && find(ctx.data,'ingredientEvents',fromEventId);
+  const event = fromEventId && find(ctx.data, 'ingredientEvents', fromEventId);
   const parent = event && event.batchId === id ? 'movement-detail/' + event.id : fromEventId === 'start' ? 'start' : 'feed';
-  const oil = batchOil(batch);
   const result = batchStats(batch, ctx.data, ctx.derived, ctx.today);
-  const estimated = text => !result.finished ? text + ' <small>szacunek</small>' : text;
+  const estimated = text => !result.finished ? text + ' <small>' + t.estimate + '</small>' : text;
   const metrics = [];
   if (result.daily != null) {
-    metrics.push(['Zużycie dzienne', estimated(fmt.number(result.daily / 1000, 3) + ' kg/dzień')]);
-    if (result.daily > 0) metrics.push(['Na ile starcza 100 kg', fmt.days(100000 / result.daily) + ' <small>prognoza</small>']);
-    if (result.birds > 0) metrics.push(['Na ptaka dziennie', estimated(fmt.number(result.daily / result.birds, 1) + ' g')]);
+    metrics.push([t.dailyUse, estimated(t.kgPerDay(fmt.number(result.daily / 1000, 2)))]);
+    if (result.daily > 0) metrics.push([t.howLong100, fmt.days(100000 / result.daily)]);
+    if (result.birds > 0) metrics.push([t.perBird, estimated(fmt.number(result.daily / result.birds, 0) + ' g')]);
   }
-  return {title:'Partia', subtitle:batch.recipeName, parent, body:`<div class="stack">
-    <section class="card stack tight"><p class="display">${batchLabel(batch)}</p>
-      ${details([['Zmieszano', fmt.fullDate(batch.date)], ['Początek podawania', fmt.fullDate(batch.start)],
-        ...(batch.end ? [['Koniec podawania', fmt.fullDate(batch.end)]] : []),
-        ...(result.remaining != null ? [['Pozostałość', estimated(fmt.mass(result.remaining))]] : [])])}</section>
-    ${metrics.length ? '<section class="card stack tight"><h2>Wyniki</h2>' + details(metrics) + '</section>' : ''}
-    <section class="stack tight"><h2>${oil ? 'Składniki bazowe' : 'Skład'}</h2><div class="list">${batch.items.filter(item => !item.oil).map(item =>
-      row({name:item.name,symbol:'stock',sub:item.additive ? '<span class="tag">Dodatek</span>' : '',
-        value:item.additive ? fmt.stockQuantity(item.millilitres == null ? showAmount(item.grams,item) : item.millilitres / 1000,item.unit) :
-          fmt.quantity(showAmount(item.grams,item),item.unit,true)})).join('')}</div></section>
-    ${oil ? '<section class="stack tight"><h2>Olej do mieszania</h2><div class="list">' +
-      row({name:oil.name,symbol:'stock',value:oilVolume(oil)}) + '</div></section>' : ''}
+  const dates = [[t.mixedDate, fmt.fullDate(batch.date)], [t.feedingFrom, fmt.fullDate(batch.start)],
+    ...(batch.end ? [[t.lastFeedingDay, fmt.fullDate(addDays(batch.end, -1))]] : []),
+    ...(result.remaining != null ? [[t.leftover, estimated(fmt.mass(result.remaining))]] : [])];
+  const items = batch.items.map(item => {
+    const extra = item.additive || item.oil;
+    const amount = item.millilitres != null ? fmt.stockQuantity(item.millilitres / 1000, 'l')
+      : extra ? fmt.stockQuantity(showAmount(item.grams, item), item.unit) : fmt.quantity(showAmount(item.grams, item), item.unit, true);
+    return row({name:item.name, sub:extra ? '<span class="tag">' + t.additive + '</span>' : '', value:amount});
+  }).join('');
+  return {title:t.batch, subtitle:batch.recipeName, parent, body:`<div class="stack">
+    <section class="card stack tight"><p class="display">${html(batchLabel(batch))}</p>${details(dates)}</section>
+    <div class="actions">${link(result.finished ? t.changeFinish : t.finishBatch, 'finish/' + id + '/batch', 'tonal')}
+      ${textLink(t.editBatch, 'batch-form/' + id, 'edit')}</div>
+    ${metrics.length ? '<section class="card stack tight"><h2>' + t.results + '</h2>' + details(metrics) + '</section>' : ''}
+    <section class="stack tight"><h2>${t.batchContent}</h2><div class="list">${items}</div></section>
     ${costRows(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed, daily:result.daily, estimated:!result.finished})}
-    <div class="actions">${link(result.finished ? 'Edytuj zakończenie' : 'Zakończ partię', 'finish/' + id + '/batch', 'tonal')}
-      ${hasNewBatchAdditives(batch) ? '' : link('Edytuj partię','batch-form/' + id,'','edit')}</div></div>`};
+    </div>`};
 }
 
 export function warehouse(ctx) {
-  return {title:'Magazyn', floating:fab('Dodaj','movement/add','plus'), body:`<div class="stack">
-    <section class="stack tight"><div class="section-head"><h2>Składniki</h2>${link('Dodaj składnik','ingredient-form','', 'plus')}</div>
-    ${ctx.derived.stocks.length ? stockRows(ctx.derived.stocks, ctx) : empty('Nie dodano jeszcze żadnego składnika.')}</section></div>`};
+  const {stocks} = ctx.derived;
+  return {title:t.stock, floating:fab(t.add, 'movement/add', 'plus'), body:`<div class="stack">
+    ${stocks.length && !stocks.some(row => row.known) ? enterStocksCard(stocks) : ''}
+    <section class="stack tight"><div class="section-head"><h2>${t.ingredients}</h2>${textLink(t.addIngredient, 'ingredient-form', 'plus')}</div>
+    ${stocks.length ? stockRows(ctx) : empty(t.noIngredients)}</section></div>`};
 }
 
-const formatRate = (price, ingredient) => fmt.money(price.cents * 1000 / price.grams) + '/kg' +
-  (ingredient.unit === 'l' ? ' · ' + fmt.money(price.cents * 1000 * ingredient.density / price.grams) + '/l' : '');
+const formatRate = (price, ingredient) => fmt.money(price.cents * 1000 / price.grams) + t.perKgSuffix +
+  (ingredient.unit === 'l' ? ' · ' + fmt.money(price.cents * 1000 * ingredient.density / price.grams) + t.perLitreSuffix : '');
+
+function buyCard(ctx, item) {
+  const {ingredient, grams, rate} = item;
+  const {daily, mixed} = ctx.derived;
+  const rows = [2, 3].map(months => {
+    const need = roundPurchase(purchaseNeed(grams, rate, daily, mixed, months * 30), ingredient.unit, ingredient.density);
+    return '<p>' + (need > 0 ? html(t.buyFor(months)) + ' <strong>' + fmt.number(need, 1) + ' ' + ingredient.unit + '</strong>'
+      : html(t.enoughFor(months))) + '</p>';
+  }).join('');
+  return `<section class="card stack tight"><h2>${t.toBuy}</h2>${rows}</section>`;
+}
 
 export function ingredientView(ctx, id) {
   const item = ctx.derived.stocks.find(entry => entry.ingredient.id === id);
@@ -207,132 +286,91 @@ export function ingredientView(ctx, id) {
   const {ingredient, grams, known, outlook} = item;
   const events = live(ctx.data.ingredientEvents).filter(row => row.ingredientId === id).sort(latestFirst);
   return {title:ingredient.name, parent:'stock', body:`<div class="stack"><section class="card stack tight">
-    <h2>Stan wyliczony</h2>${isMixingOil(ingredient) ? '<p class="muted">Olej do mieszania</p>' : ''}<p class="display"> ${known ? fmt.stockQuantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
-     ${known && grams < 0 ? warning('Sprawdź stan') : ''}
-    ${known && !isMixingOil(ingredient) ? forecast(outlook,ctx.derived.settings.threshold,ctx.today) : ''}
-    ${ingredient.price ? '<p><small>Ostatnia cena</small> ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
-    </section><div class="actions">${link('Dodaj','movement/add/' + id,'tonal','plus')}
-      ${link('Korekta stanu','movement/correction/' + id,'tonal')}
-      ${link('Inne pobranie','movement/withdrawal/' + id,'tonal')}
-      ${link('Edytuj składnik','ingredient-form/' + id,'','edit')}</div>
-    <section class="stack tight"><h2>Historia ruchów</h2>${events.length ? '<div class="list">' + events.map(event => {
-      const batch = event.batchId && find(ctx.data,'batches',event.batchId);
-      const sub = fmt.listDate(event.date,ctx.today) + (batch ? ' · ' + html(batch.recipeName) : '');
-      return row({name:movementNames[event.type],symbol:event.type === 'batch' ? 'feed' : 'stock',
-        sub,value:fmt.stockQuantity(showAmount(event.grams,ingredient),ingredient.unit,true),
+    <h2>${t.shouldBe}</h2>${isAdditive(ingredient) ? '<p class="muted">' + t.kindAdditive + '</p>' : ''}
+    <p class="display">${known ? quantity(grams, ingredient) : t.enterAmount}</p>
+    ${known && grams < 0 ? warning(t.checkStock) : ''}
+    ${known ? forecast(outlook, ctx.derived.settings.threshold, ctx.today) : ''}
+    ${ingredient.price ? '<p class="muted">' + t.lastPrice + ' ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
+    </section>
+    <div class="actions">${link(t.add, 'movement/add/' + id, 'tonal', 'plus')}
+      ${link(t.stockCorrection, 'movement/correction/' + id, 'tonal')}
+      ${textLink(t.withdrawal, 'movement/withdrawal/' + id)}
+      ${textLink(t.edit, 'ingredient-form/' + id, 'edit')}</div>
+    ${outlook ? buyCard(ctx, item) : ''}
+    <section class="stack tight"><h2>${t.history}</h2>${events.length ? '<div class="list">' + events.map(event => {
+      const batch = event.batchId && find(ctx.data, 'batches', event.batchId);
+      const sub = fmt.listDate(event.date, ctx.today) + (batch ? ' · ' + html(batch.recipeName) : '');
+      return row({name:t.movementNames[event.type], sub, value:quantity(event.grams, ingredient, true),
         route:'movement-detail/' + event.id});
-    }).join('') + '</div>' : empty('Nie ma jeszcze ruchów magazynowych.')}</section></div>`};
+    }).join('') + '</div>' : empty(t.noHistory)}</section></div>`};
 }
 
 export function movementDetail(ctx, id) {
-  const event = find(ctx.data,'ingredientEvents',id);
+  const event = find(ctx.data, 'ingredientEvents', id);
   if (!event) return missing('stock');
-  const ingredient = find(ctx.data,'ingredients',event.ingredientId);
+  const ingredient = find(ctx.data, 'ingredients', event.ingredientId);
   if (!ingredient) return missing('stock');
   const parent = 'ingredient/' + ingredient.id;
-  const batch = event.batchId && find(ctx.data,'batches',event.batchId);
-  const amount = fmt.stockQuantity(showAmount(event.grams,ingredient),ingredient.unit,true);
-  const info = [['Data',fmt.fullDate(event.date)]];
-  if (event.type === 'correction' && event.measured != null) {
-    info.push(['Stan po korekcie',fmt.stockQuantity(showAmount(event.measured,ingredient),ingredient.unit)]);
-  }
+  const batch = event.batchId && find(ctx.data, 'batches', event.batchId);
+  const info = [[t.date, fmt.fullDate(event.date)]];
+  if (event.type === 'correction' && event.measured != null) info.push([t.stockAfter, quantity(event.measured, ingredient)]);
   if (event.price) {
-    const total = event.price.cents * event.grams / event.price.grams;
-    info.push(['Koszt zakupu',fmt.money(total)]);
+    info.push([t.purchaseCost, fmt.money(event.price.cents * event.grams / event.price.grams)]);
     if (event.priceMode !== 'total') {
       const perLitre = event.priceMode === 'per-litre';
       const unitMass = perLitre ? Math.round(ingredient.density * 1000) : 1000;
-      info.push(['Cena za jednostkę',fmt.money(event.price.cents * unitMass / event.price.grams) + (perLitre ? '/l' : '/kg')]);
+      info.push([t.unitPrice, fmt.money(event.price.cents * unitMass / event.price.grams) + (perLitre ? t.perLitreSuffix : t.perKgSuffix)]);
     }
   }
-  if (batch) info.push(['Partia',html(batch.recipeName) + ' · ' + html(batchLabel(batch))]);
-  const action = batch ? link('Pokaż partię','batch/' + batch.id + '/' + id,'tonal') :
-    event.type !== 'batch' ? link('Edytuj','movement/' + event.type + '/' + ingredient.id + '/' + id,'tonal','edit') : '';
-  return {title:movementNames[event.type],subtitle:ingredient.name,parent,body:`<div class="stack">
-    <section class="card stack tight"><p class="display">${amount}</p>${details(info)}
+  if (batch) info.push([t.batch, html(batch.recipeName) + ' · ' + html(batchLabel(batch))]);
+  const action = batch ? link(t.showBatch, 'batch/' + batch.id + '/' + id, 'tonal') :
+    event.type !== 'batch' ? link(t.edit, 'movement/' + event.type + '/' + ingredient.id + '/' + id, 'tonal', 'edit') : '';
+  return {title:t.movementNames[event.type], subtitle:ingredient.name, parent, body:`<div class="stack">
+    <section class="card stack tight"><p class="display">${quantity(event.grams, ingredient, true)}</p>${details(info)}
     ${event.notes ? '<p class="notes">' + html(event.notes) + '</p>' : ''}</section>
     <div class="actions">${action}</div></div>`};
 }
 
-function newLayingStatus(cohort, state, today) {
-  return state.count > 0 && state.status === 'young' && cohort.expectedStart && cohort.expectedStart <= today;
-}
-
 export function flockView(ctx) {
-  const cohorts = live(ctx.data.cohorts).sort(latestFirst);
+  const cohorts = ctx.derived.cohorts.slice().sort(latestFirst);
   const {flock} = ctx.derived;
-  return {title:'Stado', floating:fab('Nowe ptaki','flock-add','plus'), body:`<div class="stack">
-    <section class="card card--strong stack tight"><h2>Razem</h2><p class="display">${fmt.birds(flock.total)}</p>
-      ${details([['Nioski',fmt.number(flock.laying)],['Młode kury',fmt.number(flock.young)],['Koguty',fmt.number(flock.roosters)],
-        ...(flock.retired ? [['Wycofane',fmt.number(flock.retired)]] : []),
-        ...(flock.unknown ? [['Status do wpisania',fmt.number(flock.unknown)]] : [])])}</section>
-    <section class="stack tight"><h2>Roczniki</h2>${cohorts.length ? '<div class="list">' + cohorts.map(cohort => {
-      const state = cohortState(cohort,ctx.data.cohortChanges,ctx.today);
-      const due = newLayingStatus(cohort,state,ctx.today);
-      const sub = [state.status ? fmt.cohortStatuses[state.status] : cohort.category === 'hens' ? 'Status do wpisania' : 'Koguty',
-        fmt.age(cohortAge(cohort,ctx.today)),cohort.mark ? html(cohort.mark) : ''];
-      if (state.status === 'young' && cohort.expectedStart) {
-        sub.push(due ? warning('Sprawdź start nieśności') : 'Przewidywany start ' + fmt.fullDate(cohort.expectedStart));
-      }
-      return row({name:cohort.name,symbol:'flock',sub:sub.filter(Boolean).join(' · '),
-        value:fmt.number(state.count) + ' szt.',route:'cohort/' + cohort.id});
-    }).join('') + '</div>' : empty('Nie ma jeszcze roczników.',link('Dodaj rocznik','cohort-form','tonal'))}</section></div>`};
-}
-
-export function flockAdd(ctx) {
-  const cohorts = live(ctx.data.cohorts).sort(latestFirst);
-  return {title:'Nowe ptaki',parent:'flock',body:`<div class="stack">
-    <div>${link('Nowy rocznik','cohort-form','tonal','plus')}</div>
-    ${cohorts.length ? '<section class="stack tight"><h2>Dodaj do istniejącego rocznika</h2><div class="list">' +
-      cohorts.map(cohort => row({name:cohort.name,symbol:'flock',sub:html(cohort.mark),route:'change/' + cohort.id + '/add'})).join('') +
-      '</div></section>' : ''}</div>`};
+  return {title:t.flock, floating:fab(t.addCohort, 'cohort-form', 'plus'), body:`<div class="stack">
+    ${cohorts.length ? `<section class="card stack tight"><h2>${t.together}</h2><p class="display">${fmt.birds(flock.total)}</p>
+      <p class="muted">${html(t.henCount(fmt.hens(flock.hens), fmt.roosters(flock.roosters)))}</p></section>
+    <section class="stack tight"><h2>${t.cohorts}</h2><div class="list">${cohorts.map(cohort => {
+      const count = cohortCount(cohort, ctx.data.cohortChanges, ctx.today);
+      const sub = [cohort.category === 'hens' ? t.hens : t.roosters, fmt.age(cohortAge(cohort, ctx.today)), cohort.mark]
+        .filter(Boolean).map(html).join(' · ');
+      return row({name:cohort.name, symbol:'hen', sub, value:t.pieces(fmt.number(count)), route:'cohort/' + cohort.id});
+    }).join('')}</div></section>` : empty(t.addFirstCohort)}</div>`};
 }
 
 export function cohortView(ctx, id) {
-  const cohort = find(ctx.data,'cohorts',id);
+  const cohort = find(ctx.data, 'cohorts', id);
   if (!cohort) return missing('flock');
-  const history = cohortEvents(cohort,ctx.data.cohortChanges,ctx.today).reverse();
-  const state = cohortState(cohort,ctx.data.cohortChanges,ctx.today);
-  const isHen = cohort.category === 'hens';
-  const dateLabel = {purchase:'Data zakupu',hatch:'Data wyklucia',initial:'Data stanu początkowego'};
-  const layingDateKnown = state.layingSince && (state.status !== 'retired' || state.retiredSince);
-  const layingYear = layingDateKnown ? Math.floor(cohortAge({date:state.layingSince,dateKind:'hatch'},
-    state.retiredSince ?? ctx.today).months / 12) + 1 : null;
-  const due = newLayingStatus(cohort,state,ctx.today);
+  const history = cohortEvents(cohort, ctx.data.cohortChanges).reverse();
+  const count = cohortCount(cohort, ctx.data.cohortChanges, ctx.today);
+  const hatched = cohort.dateKind === 'hatch';
   const eventRows = history.map(event => {
     const kind = flockEventKind(event);
-    const context = kind === 'loss' ? fmt.lossReasons[event.reason] : kind === 'add' ? fmt.cohortOrigins[event.origin] : '';
-    const count = kind === 'status' ? fmt.cohortStatuses[event.status] :
-      (kind === 'add' ? '+' : kind === 'loss' ? '−' : '') + fmt.number(event.count) + ' szt.';
-    return row({name:fmt.flockEvents[kind],symbol:'flock',
-      sub:[fmt.fullDate(event.date),context,html(event.notes)].filter(Boolean).join(' · '),
-      value:count,route:'change/' + id + '/' + kind + '/' + event.id});
+    const value = kind === 'add' ? '+' + fmt.number(event.count) : kind === 'loss' ? '−' + fmt.number(event.count)
+      : t.correctionRow(fmt.number(event.count));
+    return row({name:fmt.fullDate(event.date), sub:html(event.notes), value,
+      route:kind === 'correction' ? '' : 'change/' + id + '/' + event.id});
   }).join('');
-  const origin = fmt.cohortOrigins[cohortOrigin(cohort)];
-  return {title:cohort.name,parent:'flock',body:`<div class="stack">
-    <section class="card stack tight"><h2>${isHen ? 'Kury' : 'Koguty'}</h2>
-    <p class="display">${fmt.number(state.count)} szt.</p>
-    ${details([[dateLabel[cohort.dateKind],fmt.fullDate(cohort.date)],['Pochodzenie',origin],
-      ['Wiek',fmt.age(cohortAge(cohort,ctx.today))],
-      ...(cohort.mark ? [['Oznaczenie',html(cohort.mark)]] : []),
-      ...(isHen ? [['Status',fmt.cohortStatuses[state.status] ?? 'Nieustalony']] : []),
-      ...(state.status === 'young' && cohort.expectedStart ? [['Przewidywany start nieśności',fmt.fullDate(cohort.expectedStart)]] : []),
-      ...(layingYear ? [[state.status === 'retired' ? 'Ostatni odnotowany rok nieśności' : 'Rok nieśności',
-        fmt.number(layingYear) + '.']] : [])])}
+  return {title:cohort.name, parent:'flock', body:`<div class="stack">
+    <section class="card stack tight"><h2>${cohort.category === 'hens' ? t.hens : t.roosters}</h2>
+    <p class="display">${t.pieces(fmt.number(count))}</p>
+    ${details([[hatched ? t.hatchDate : t.purchaseDate, fmt.fullDate(cohort.date)],
+      [t.age, fmt.age(cohortAge(cohort, ctx.today))],
+      ...(cohort.mark ? [[t.mark, html(cohort.mark)]] : [])])}
     ${cohort.notes ? '<p class="notes">' + html(cohort.notes) + '</p>' : ''}</section>
-    ${due ? banner('Sprawdź start nieśności','Minęła przewidywana data startu nieśności.',
-      link('Zmień status','change/' + id + '/status')) : ''}
-    <div class="actions">${link('Nowe ptaki','change/' + id + '/add','tonal','plus')}${link('Ubytek','change/' + id + '/loss','tonal')}
-      ${!due && isHen && state.status !== 'retired' ? link('Zmień status','change/' + id + '/status','tonal') : ''}
-      ${link('Korekta liczby','change/' + id + '/correction','tonal')}
-      ${link('Edytuj rocznik','cohort-form/' + id,'','edit')}</div>
-    <section class="stack tight"><h2>Historia zdarzeń</h2><div class="list">${eventRows}
-      ${row({name:cohortOrigin(cohort) === 'initial' ? 'Stan początkowy' : 'Nowy rocznik',symbol:'flock',
-        sub:[fmt.fullDate(cohort.date),cohortOrigin(cohort) === 'initial' ? '' : origin].filter(Boolean).join(' · '),
-        value:fmt.number(cohort.count) + ' szt.',route:'cohort-form/' + id})}
+    <div class="actions">${link(t.changeCount, 'change/' + id, 'tonal')}${textLink(t.edit, 'cohort-form/' + id, 'edit')}</div>
+    <section class="stack tight"><h2>${t.changes}</h2><div class="list">${eventRows}
+      ${row({name:fmt.fullDate(cohort.date), sub:t.newCohortRow, value:t.pieces(fmt.number(cohort.count))})}
     </div></section></div>`};
 }
 
 export function missing(parent = 'start') {
-  return {title:'Brak wpisu', parent, body:empty('Ten wpis jest niedostępny.', link('Wróć',parent,'tonal'))};
+  return {title:t.noEntryTitle, parent, body:empty(t.noEntry, link(t.back, parent, 'tonal'))};
 }
