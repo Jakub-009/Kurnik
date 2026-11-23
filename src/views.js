@@ -63,7 +63,7 @@ function batchLabel(batch) {
 }
 
 const feedingDay = (batch, today) => Math.floor(nowPoint(today) - dayNumber(batch.start)) + 1;
-const kgText = grams => fmt.number(grams / 1000, 1) + ' kg';
+const kgText = grams => fmt.number(grams / 1000, 1) + '\u00a0kg';
 
 // Jak liczone jest zużycie: „34 × 115 g = 3,9 kg dziennie” albo „3,7 kg dziennie”.
 function basis(ctx) {
