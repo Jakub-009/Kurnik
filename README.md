@@ -1,0 +1,37 @@
+# Kurnik PWA
+
+Pasza, magazyn składników i roczniki stada. Aplikacja działa w Chrome także bez połączenia po pierwszym otwarciu z internetem. Wpisy są w lokalnej bazie IndexedDB. Do działania wystarczy hosting statyczny.
+
+## Wdrożenie na GitHub Pages
+
+1. Rozpakuj ZIP. Prześlij jego zawartość do katalogu głównego publicznego repozytorium, na gałąź `main`. Plik `index.html` powinien leżeć bezpośrednio w katalogu głównym. Zachowaj także `.nojekyll` i `.gitignore`. Jeżeli przesyłasz pliki z eksploratora, włącz widoczność ukrytych plików.
+2. W repozytorium wybierz **Settings → Pages → Deploy from a branch → main → /(root) → Save**. Po wdrożeniu otwórz adres HTTPS wyświetlony przez GitHub Pages. [Instrukcja GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+3. W Chrome na Androidzie otwórz adres aplikacji, a następnie wybierz z menu **Dodaj do ekranu głównego** lub **Zainstaluj aplikację**. Po pierwszym uruchomieniu z internetem możesz otwierać Kurnik z ikony i pracować offline.
+
+## Pierwsze użycie
+
+- Aplikacja zaczyna z recepturą podstawową ze specyfikacji. W **Magazyn** otwórz składnik i użyj **Korekta stanu**, aby wpisać rzeczywisty zapas.
+- W **Stado** dodaj roczniki z rzeczywistą obsadą. FAB „Dodaj” przyjmuje również własne i otrzymane zapasy. Ceny z ostatniego wycenionego zakupu służą do wyliczenia kosztu receptury. Zakup oleju można wycenić także za litr. Aby dodać własny olej, w Magazynie utwórz składnik w litrach, wpisz gęstość i wybierz zastosowanie **Olej do mieszania**.
+- W **Ustawienia → Eksportuj kopię** pobierzesz plik JSON ze wszystkimi danymi. Zachowaj go poza przeglądarką. Import zastępuje dane po potwierdzeniu. Kopii JSON nie umieszczaj w publicznym repozytorium.
+
+## Test lokalny i aktualizacje
+
+- Otwórz terminal w rozpakowanym katalogu. Uruchom `python3 -m http.server 8000` i otwórz [localhost:8000](http://localhost:8000). Uruchomienie przez dwuklik w plik HTML nie obsługuje modułów PWA.
+- Uruchom `node --test` z Node.js 20 lub nowszym. Testy obejmują obliczenia receptur, nakładanie się okresów, zapis partii z olejem i zgodność kopii danych.
+- Przy każdym wydaniu zwiększ `VERSION` w `sw.js` i prześlij zaktualizowane pliki. Gdy aplikacja pobierze nową wersję, zamknij wszystkie jej okna i otwórz ją ponownie pod tym samym adresem. Dane pozostaną w IndexedDB.
+
+## Szczegóły obliczeń
+
+- Masy partii są zapisywane w pełnych gramach. Przy skalowaniu pojedyncze gramy rozdziela się według największych reszt, aby suma składników odpowiadała wybranej masie. Ekran mieszania podpowiada ilości dla 50 lub 100 kg. Zaokrągla wskazania do 100 g lub ml od 5 kg lub l oraz do 50 g lub ml poniżej tej wartości. Przy ilościach poniżej 50 g lub ml pokazuje drobniejsze wartości. Lista mieszania pokazuje zaokrąglone ilości, a zapis partii zachowuje wyliczone ilości. Stan magazynu i ilości w historii korzystają z zapisanych danych i pokazują do trzech miejsc po przecinku.
+- W recepturze wybierz **Zmień kolejność**, przeciągnij składniki za uchwyty i zapisz. Olej dodany do receptury zachowuje miejsce na liście i proponowaną dawkę, przeliczaną do wybranej masy bazowej. Przy mieszaniu możesz zmienić rodzaj oleju lub jego ilość. Olej pozostaje poza proporcjami i masą bazową. Jego ilość zapisuje się osobno w litrach, a gęstość pozwala uwzględnić olej w stanie magazynu, faktycznej masie partii i obliczeniach kosztu. Wcześniej zapisane partie zachowują swój oryginalny skład. Istniejące płynne składniki z nazwą zaczynającą się od „Olej” aplikacja traktuje jako dodatki. Zastosowanie można zmienić w Magazynie.
+- Przy zazębiających się zakończonych partiach sumuje się zjedzoną masę i liczy wspólne dni tylko raz. Gdy kilka partii jest otwartych, prognoza przypisuje zużycie od najwcześniej rozpoczętej. Karta **Pasza w użyciu** pokazuje datę partii, datę podawania i dzienne zużycie przyjęte do szacunku.
+- Cena z zakupu zachowuje proporcję groszy do gramów, co pozwala liczyć ceny za litr i zakupy rozliczane łącznie bez wcześniejszego zaokrąglania ceny kilograma.
+- Stado rejestruje roczniki i zdarzenia. Wprowadzony przewidywany start nieśności uruchamia przypomnienie o zmianie statusu. Rok nieśności pojawia się przy znanej dacie faktycznego startu.
+
+## Przywrócenie wersji 1.4 po użyciu wersji 1.5
+
+Ten komplet zawiera wersję 1.4.0 z obsługą otwarcia istniejącej bazy IndexedDB również po uruchomieniu wersji 1.5 oraz importu jej kopii. Rozpakuj pliki do katalogu głównego repozytorium. Wgraj również `.nojekyll` i `.gitignore`. Po publikacji otwórz Kurnik z internetem, zamknij wszystkie jego okna i otwórz ponownie pod tym samym adresem.
+
+Partie z dodatkami zapisane w wersji 1.5 zachowują skład i ruchy magazynowe. W wersji 1.4 możesz przeglądać ich skład i edytować zakończenie partii. Edycja składu tych historycznych partii jest wyłączona. Receptury z kilkoma dodatkami lub dodatkiem w kilogramach są widoczne. Aby ich użyć do mieszania w wersji 1.4, dostosuj je do formatu z jednym dodatkiem w litrach.
+
+Dane w przeglądarce są przypisane do adresu aplikacji. Gdy aplikacja była używana pod innym adresem, zaimportuj kopię z tego adresu. Plików kopii nie umieszczaj w publicznym repozytorium.
