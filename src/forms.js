@@ -712,7 +712,7 @@ export function cohortForm(ctx, id) {
 
   return {title:cohort ? t.editCohort : t.addCohort, parent, form:true,
     body:form(`${field('name', t.nameLabel, cohort?.name, {length:80})}
-      <div class="form-grid">${birdsField('hens', t.hens, cohort?.hens)}${birdsField('roosters', t.roosters, cohort?.roosters)}</div>
+      <div class="form-grid form-grid--aligned">${birdsField('hens', t.hens, cohort?.hens)}${birdsField('roosters', t.roosters, cohort?.roosters)}</div>
       ${fromRearing ? '' : `${choice('date-kind', t.boughtOrHatched, [['purchase', t.bought], ['hatch', t.hatched]], dateKind)}
       ${dateField('date', dateKind === 'hatch' ? t.hatchDate : t.purchaseDate, cohort?.date ?? ctx.today, '1900-01-01', lastAllowedDate)}
       <div id="weeks-wrap"${dateKind === 'purchase' ? '' : ' hidden'}>${field('weeks', t.ageAtPurchase, asInput(cohort?.weeks), {mode:'numeric'})}</div>`}
@@ -772,8 +772,8 @@ export function rearingForm(ctx, id) {
       <div id="egg-fields" class="stack tight"${method === 'bought' ? ' hidden' : ''}>
         ${dateField('set-date', t.setDate, old?.setDate ?? ctx.today, '1900-01-01', ctx.today)}
         ${birdsField('eggs', t.eggs, old?.eggs)}
-        <div class="form-grid">${birdsField('infertile', t.infertile, old?.infertile)}${birdsField('dead', t.deadInShell, old?.dead)}</div>
-        ${hatched ? `<div class="form-grid">${dateField('hatch-date', t.hatchedDate, cohort.date, old.setDate, ctx.today)}
+        <div class="form-grid form-grid--aligned">${birdsField('infertile', t.infertile, old?.infertile)}${birdsField('dead', t.deadInShell, old?.dead)}</div>
+        ${hatched ? `<div class="form-grid form-grid--aligned">${dateField('hatch-date', t.hatchedDate, cohort.date, old.setDate, ctx.today)}
           ${birdsField('hatched', t.hatchedCount, old.hatched)}</div>` : ''}</div>
       <div id="bought-fields" class="stack tight"${method === 'bought' ? '' : ' hidden'}>
         ${dateField('date', t.purchaseDate, old?.method === 'bought' ? cohort.date : ctx.today, '1900-01-01', ctx.today)}
@@ -861,7 +861,7 @@ export function transferForm(ctx, id) {
   return {title:t.moveToFlock, subtitle:cohort.name, parent, form:true,
     body:form(`<p class="muted">${html(t.moveHelp(fmt.chicks(now)))}</p>
       ${dateField('date', t.moveDate, ctx.today, earliest, ctx.today)}
-      <div class="form-grid">${birdsField('hens', t.hens, null)}${birdsField('roosters', t.roosters, null)}</div>`),
+      <div class="form-grid form-grid--aligned">${birdsField('hens', t.hens, null)}${birdsField('roosters', t.roosters, null)}</div>`),
     submit() {
       const joined = readDate(value('date'), 'date', earliest, ctx.today);
       const hens = readBirds('hens');

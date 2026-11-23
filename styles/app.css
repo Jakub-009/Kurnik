@@ -113,3 +113,4 @@ a.home-card:active { background: var(--md-sys-color-surface-container); }
 .mini-row--low strong, .mini-row--low small { color: var(--md-sys-color-tertiary); }
 .mini-row .icon { width: 18px; height: 18px; flex-basis: 18px; }
 .current-until { font-weight: 500; }
+.form-grid--aligned { align-items: end; }

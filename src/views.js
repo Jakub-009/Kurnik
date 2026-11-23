@@ -401,7 +401,7 @@ function rearingSummary(cohort, ctx) {
     const state = incubation(cohort, ctx.today);
     const value = state.day > 22 ? t.overdue : state.early ? t.canHatch : t.hatchIn(t.approx + ' ' + fmt.days(state.left));
     return {title:t.incubation, value, low:state.day > 22,
-      sub:[t.incubationDay(fmt.number(state.day)), t.eggCount(fmt.number(state.eggsLeft))].join(' · '),
+      sub:[t.incubationDay(fmt.number(state.day)), fmt.eggs(state.eggsLeft)].join(' · '),
       caption:t.hatchDue(fmt.listDate(state.due, ctx.today)), count:''};
   }
   const count = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
@@ -429,14 +429,13 @@ export function flockView(ctx) {
   return {title:t.flock, floating:fab(t.addCohort, 'cohort-form', 'plus'), body:`<div class="stack">
     ${cohorts.length ? `<section class="card stack tight"><h2>${t.together}</h2><p class="display">${fmt.birds(flock.total)}</p>
       <p class="muted">${html(hensRoosters(flock))}${flock.young ? html(', ' + t.orChicks(fmt.chicks(flock.young))) : ''}</p></section>` : ''}
-    ${rearing.length ? `<section class="stack tight"><div class="section-head"><h2>${t.rearingTitle}</h2>${textLink(t.add, 'rearing-form', 'plus')}</div>
-      <div class="list">${rearingRows}</div></section>` : ''}
+    ${rearing.length ? `<section class="stack tight"><h2>${t.rearingTitle}</h2><div class="list">${rearingRows}</div></section>` : ''}
     ${cohorts.length ? `<section class="stack tight"><h2>${t.cohorts}</h2><div class="list">${cohorts.map(cohort => {
       const counts = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today);
       const sub = [hensRoosters(counts), fmt.age(cohortAge(cohort, ctx.today)), cohort.mark].filter(Boolean).map(html).join(' · ');
       return row({name:cohort.name, symbol:'hen', sub, value:t.pieces(fmt.number(counts.hens + counts.roosters)), route:'cohort/' + cohort.id});
     }).join('')}</div></section>` : empty(t.addFirstCohort)}
-    ${rearing.length ? '' : '<div>' + textLink(t.addRearing, 'rearing-form', 'plus') + '</div>'}</div>`};
+    <div>${link(t.addRearing, 'rearing-form', 'tonal', 'plus')}</div></div>`};
 }
 
 function historyRows(ctx, cohort) {
@@ -495,7 +494,7 @@ export function cohortView(ctx, id) {
     ...(cohort.mark ? [[t.mark, html(cohort.mark)]] : [])];
   if (rearing) {
     info.push([t.moveDate, fmt.fullDate(cohort.joined)]);
-    if (rearing.method !== 'bought') info.push([t.fromHatch, html(t.fromHatchValue(fmt.number(rearing.eggs), fmt.number(rearing.hatched)))]);
+    if (rearing.method !== 'bought') info.push([t.fromHatch, html(t.fromHatchValue(fmt.eggs(rearing.eggs), fmt.number(rearing.hatched)))]);
   }
   return {title:cohort.name, parent:'flock', body:`<div class="stack">
     <section class="card stack tight"><p class="display">${fmt.birds(counts.hens + counts.roosters)}</p>

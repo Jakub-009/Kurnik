@@ -326,11 +326,11 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
   screen = start(ctxOf(data, now));
   // 30 ptaków × 120 g = 3,6 kg dziennie; 8,5 dnia karmienia → zostało 50 − 30,6 = 19,4 kg; 19,4 / 3,6 ≈ 5 dni.
   assert.match(screen.body, /Następne mieszanie[\s\S]*za ≈ 5 dni/);
-  assert.match(screen.body, /zostało ok\. 19,4 kg/);
+  assert.match(screen.body, /zostało około 19,4 kg/);
   assert.match(screen.body, /Na następną partię \(50 kg\) brakuje: Śruta sojowa 6 kg/);
-  assert.match(screen.body, /Kończy się najszybciej[\s\S]*Śruta sojowa[\s\S]*dokup ok\./);
+  assert.match(screen.body, /Kończy się najszybciej[\s\S]*Śruta sojowa[\s\S]*dokup około/);
   assert.equal((screen.body.match(/class="mini-row/g) ?? []).length, 3);
-  assert.match(screen.body, /30 ptaków[\s\S]*26 kur, 4 koguty[\s\S]*ok\. 120 g na ptaka dziennie, razem 3,6 kg/);
+  assert.match(screen.body, /30 ptaków[\s\S]*26 kur, 4 koguty[\s\S]*około 120 g na ptaka dziennie, razem 3,6 kg/);
   assert.match(screen.body, /Wartość z Ustawień/);
   assert.doesNotMatch(screen.body, /Zrób kopię/);
   data.settings[0].lastExport = '2026-09-01';
@@ -366,7 +366,7 @@ test('bez stada prognoza liczy kg dziennie, dziś jako pół dnia; rocznik z pó
   let derived = derive(data, '2026-11-23');
   assert.equal(derived.model.perBird, null);
   near(derived.active.remaining, 50000 - 8.5 * 3700);
-  assert.match(feed(ctxOf(data, '2026-11-23')).body, /Zostało ok\. 18,6 kg[\s\S]*9\. dzień karmienia[\s\S]*Liczone: 3,7 kg dziennie/);
+  assert.match(feed(ctxOf(data, '2026-11-23')).body, /Zostało około 18,6 kg[\s\S]*9\. dzień karmienia[\s\S]*Liczone: 3,7 kg dziennie/);
   data.cohorts.push(record({name:'Kury', date:'2026-11-23', dateKind:'purchase', weeks:null, hens:25, roosters:0, rearing:null, mark:'', notes:''}));
   derived = derive(data, '2026-11-23');
   near(derived.active.remaining, 50000 - 8.5 * 25 * 120);

@@ -59,6 +59,7 @@ export const hens = value => counted(value, t.forms.hens);
 export const roosters = value => counted(value, t.forms.roosters);
 export const batchCount = value => counted(value, t.forms.batches);
 export const chicks = value => counted(value, t.forms.chicks);
+export const eggs = value => counted(value, t.forms.eggs);
 
 export function age({months, minimum}) {
   const years = Math.floor(months / 12);
