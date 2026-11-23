@@ -24,8 +24,13 @@ export function quantity(value, unit = 'kg', mixing = false) {
 export function mixingQuantity(value, unit = 'kg') {
   const step = value >= 5 ? 10 : value >= .05 ? 20 : 1000;
   const rounded = Math.round(value * step) / step;
-  const prefix = Math.abs(rounded - value) > 1e-8 ? '≈ ' : '';
-  return prefix + number(rounded,3) + ' ' + unit;
+  return number(rounded,3) + ' ' + unit;
+}
+
+export function stockQuantity(value, unit, signed = false) {
+  const digits = number(Math.abs(value),3);
+  const sign = digits === '0' ? '' : value < 0 ? '−' : signed ? '+' : '';
+  return sign + digits + ' ' + unit;
 }
 
 export const cohortOrigins = {purchase:'Zakup', rearing:'Odchów', initial:'Stan początkowy'};

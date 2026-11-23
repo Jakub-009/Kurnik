@@ -7,7 +7,8 @@ import {icon} from '../ui/icons.js';
 
 const symbol = {start:'home', feed:'feed', stock:'stock', flock:'flock'};
 const tabs = {start:'Start', feed:'Pasza', stock:'Magazyn', flock:'Stado'};
-const movementNames = {purchase:'Zakup', addition:'Dodanie zapasu', correction:'Korekta stanu', withdrawal:'Inne pobranie', batch:'Zużycie w partii'};
+const movementNames = {purchase:'Zakup', addition:'Dodanie zapasu', correction:'Korekta stanu',
+  withdrawal:'Inne pobranie', batch:'Zużycie w partii'};
 
 export function frame(screen, route) {
   const {title, subtitle = '', parent, form = false, body, floating = ''} = screen;
@@ -25,7 +26,7 @@ export function frame(screen, route) {
 function stockRows(stocks, ctx, compact = false) {
   const threshold = ctx.derived.settings.threshold;
   return '<div class="list">' + stocks.map(({ingredient,grams,known,outlook}) => {
-    const state = known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania';
+    const state = known ? fmt.stockQuantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania';
     const notices = known && grams < 0 ? warning('Sprawdź stan') : outlook && outlook.days < threshold ? warning('Na wyczerpaniu') : '';
     const projected = outlook ? forecast(outlook,threshold,ctx.today,compact) : '';
     const item = row({name:ingredient.name,symbol:compact ? '' : 'stock',route:'ingredient/' + ingredient.id,
@@ -41,14 +42,21 @@ function currentCard(ctx, home = false) {
   if (!active) return `<section class="card card--strong stack tight">${heading}<p>Brak partii w użyciu</p>
     <div>${link('Mieszam', 'mix', 'tonal', 'plus')}</div></section>`;
   const {batch, remaining} = active;
-  const age = daysBetween(batch.start, ctx.today) + 1;
+  const {daily,openStatus} = ctx.derived;
+  const other = openStatus.length - 1;
   return `<section class="card card--strong stack tight current-card">
     <div class="current-heading">${heading}${home ? '' : link('Zakończ partię','finish/' + batch.id,'tonal')}</div>
-    <div>${html(batch.recipeName)} <span class="muted">· Dzień ${fmt.number(age)}</span></div>
-    <p class="display">≈ ${fmt.mass(remaining)}${ctx.derived.daily > 0 ? ' · ≈ ' + fmt.days(remaining / ctx.derived.daily) : ''}</p>
-    <small>prognoza</small>
+    <strong>${html(batch.recipeName)} · ${batchLabel(batch)}</strong>
+    <p class="muted">Partia z ${fmt.listDate(batch.date,ctx.today)} · podawanie od ${fmt.listDate(batch.start,ctx.today)}</p>
+    <p class="muted">Szacunek${daily > 0 ? ' przy zużyciu ' + fmt.number(daily / 1000,2) + ' kg/dzień' : ''}</p>
+    <dl class="detail-grid current-estimate">
+      <div><dt>Zostało</dt><dd>${fmt.mass(remaining)}</dd></div>
+      ${daily > 0 ? '<div><dt>Wystarczy na</dt><dd>' + fmt.days(remaining / daily) + '</dd></div>' : ''}
+    </dl>
     ${remaining <= 0 ? '<p>' + warning('Sprawdź, czy partia jest jeszcze podawana.') + '</p>' : ''}
-    ${home ? '' : '<div>' + link('Szczegóły partii','batch/' + batch.id) + '</div>'}</section>`;
+    ${other ? '<p class="muted">Inne otwarte partie: ' + fmt.number(other) + '. Szacunek uwzględnia podawanie od najstarszej partii.</p>' : ''}
+    <div class="actions">${link('Szczegóły partii','batch/' + batch.id + (home ? '/start' : ''))}
+      ${home && other ? link('Lista partii','feed') : ''}</div></section>`;
 }
 
 function flockText(flock) {
@@ -82,7 +90,7 @@ export function feed(ctx) {
   const {derived, today} = ctx;
   return {title:'Pasza', floating:fab('Mieszam','mix','plus'), body:`<div class="stack">
     ${currentCard(ctx)}
-    <section class="card"><h2>Na ile starcza 100 kg?</h2><p class="display">${derived.daily > 0 ? '≈ ' + fmt.days(100000 / derived.daily) : 'Brak prognozy'}</p>
+    <section class="card"><h2>Na ile starcza 100 kg?</h2><p class="display">${derived.daily > 0 ? fmt.days(100000 / derived.daily) : 'Brak prognozy'}</p>
       <small>${derived.daily > 0 ? 'prognoza · ' : ''}${fmt.number(derived.daily / 1000, 3)} kg dziennie</small></section>
     <section class="stack tight"><div class="section-head"><h2>Receptury</h2>${link('Dodaj recepturę','recipe-form','', 'plus')}</div>
       ${derived.recipes.length ? '<div class="list">' + derived.recipes.map(recipe => row({name:recipe.name,
@@ -99,7 +107,7 @@ export function feed(ctx) {
 function costRows(cost, settings, {batch = false, consumed, daily, estimated = false, title = 'Koszt mieszanki'} = {}) {
   if (cost.kind === 'none') return '';
   const content = [];
-  const value = text => estimated ? '≈ ' + text + ' <small>prognoza</small>' : text;
+  const value = text => estimated ? text + ' <small>szacunek</small>' : text;
   if (cost.kind === 'partial') content.push([title,'Brak danych']);
   if (cost.kind === 'full') {
     if (batch) content.push(['Koszt partii', fmt.money(cost.cents)]);
@@ -146,24 +154,27 @@ export function recipeView(ctx, id) {
     <section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${recipeRows}</div></section>
     ${costRows(mixtureCost(composition.items),ctx.derived.settings,hasOil ? {title:'Koszt bazy'} : {})}
     <div class="actions">${link('Edytuj', 'recipe-form/' + id, 'tonal', 'edit')}
+      ${recipe.items.length > 1 ? link('Zmień kolejność','recipe-order/' + id,'tonal') : ''}
       ${recipe.current ? '' : button('Ustaw jako aktualną', 'current', 'tonal', 'check')}
       ${hasBase ? link('Mieszam','mix/' + id,'','plus') : ''}</div></div>`,
     action: (action) => { if (action === 'current') ctx.commit(data => ctx.setCurrent(data, id)); }};
 }
 
-export function batchView(ctx, id) {
+export function batchView(ctx, id, fromEventId) {
   const batch = find(ctx.data, 'batches', id);
   if (!batch) return missing('feed');
+  const event = fromEventId && find(ctx.data,'ingredientEvents',fromEventId);
+  const parent = event && event.batchId === id ? 'movement-detail/' + event.id : fromEventId === 'start' ? 'start' : 'feed';
   const oil = batchOil(batch);
   const result = batchStats(batch, ctx.data, ctx.derived, ctx.today);
-  const estimated = text => !result.finished ? '≈ ' + text + ' <small>prognoza</small>' : text;
+  const estimated = text => !result.finished ? text + ' <small>szacunek</small>' : text;
   const metrics = [];
   if (result.daily != null) {
     metrics.push(['Zużycie dzienne', estimated(fmt.number(result.daily / 1000, 3) + ' kg/dzień')]);
-    if (result.daily > 0) metrics.push(['Na ile starcza 100 kg', '≈ ' + fmt.days(100000 / result.daily) + ' <small>prognoza</small>']);
+    if (result.daily > 0) metrics.push(['Na ile starcza 100 kg', fmt.days(100000 / result.daily) + ' <small>prognoza</small>']);
     if (result.birds > 0) metrics.push(['Na ptaka dziennie', estimated(fmt.number(result.daily / result.birds, 1) + ' g')]);
   }
-  return {title:'Partia', subtitle:batch.recipeName, parent:'feed', body:`<div class="stack">
+  return {title:'Partia', subtitle:batch.recipeName, parent, body:`<div class="stack">
     <section class="card stack tight"><p class="display">${batchLabel(batch)}</p>
       ${details([['Zmieszano', fmt.fullDate(batch.date)], ['Początek podawania', fmt.fullDate(batch.start)],
         ...(batch.end ? [['Koniec podawania', fmt.fullDate(batch.end)]] : []),
@@ -193,7 +204,7 @@ export function ingredientView(ctx, id) {
   const {ingredient, grams, known, outlook} = item;
   const events = live(ctx.data.ingredientEvents).filter(row => row.ingredientId === id).sort(latestFirst);
   return {title:ingredient.name, parent:'stock', body:`<div class="stack"><section class="card stack tight">
-    <h2>Stan wyliczony</h2>${isMixingOil(ingredient) ? '<p class="muted">Olej do mieszania</p>' : ''}<p class="display"> ${known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
+    <h2>Stan wyliczony</h2>${isMixingOil(ingredient) ? '<p class="muted">Olej do mieszania</p>' : ''}<p class="display"> ${known ? fmt.stockQuantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
      ${known && grams < 0 ? warning('Sprawdź stan') : ''}
     ${known && !isMixingOil(ingredient) ? forecast(outlook,ctx.derived.settings.threshold,ctx.today) : ''}
     ${ingredient.price ? '<p><small>Ostatnia cena</small> ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
@@ -202,13 +213,42 @@ export function ingredientView(ctx, id) {
       ${link('Inne pobranie','movement/withdrawal/' + id,'tonal')}
       ${link('Edytuj składnik','ingredient-form/' + id,'','edit')}</div>
     <section class="stack tight"><h2>Historia ruchów</h2>${events.length ? '<div class="list">' + events.map(event => {
-      const route = event.batchId ? 'batch/' + event.batchId : 'movement/' + event.type + '/' + id + '/' + event.id;
-      const sub = [fmt.listDate(event.date,ctx.today), event.notes ? html(event.notes) : '', event.price ? fmt.money(event.price.cents * event.grams / event.price.grams) : '']
-        .filter(Boolean).join(' · ');
-      const amount = showAmount(event.grams, ingredient);
-      return row({name:movementNames[event.type], symbol:event.type === 'batch' ? 'feed' : 'stock',
-        sub, value:(amount > 0 ? '+' : '') + fmt.quantity(amount, ingredient.unit), route});
+      const batch = event.batchId && find(ctx.data,'batches',event.batchId);
+      const sub = fmt.listDate(event.date,ctx.today) + (batch ? ' · ' + html(batch.recipeName) : '');
+      return row({name:movementNames[event.type],symbol:event.type === 'batch' ? 'feed' : 'stock',
+        sub,value:fmt.stockQuantity(showAmount(event.grams,ingredient),ingredient.unit,true),
+        route:'movement-detail/' + event.id});
     }).join('') + '</div>' : empty('Nie ma jeszcze ruchów magazynowych.')}</section></div>`};
+}
+
+export function movementDetail(ctx, id) {
+  const event = find(ctx.data,'ingredientEvents',id);
+  if (!event) return missing('stock');
+  const ingredient = find(ctx.data,'ingredients',event.ingredientId);
+  if (!ingredient) return missing('stock');
+  const parent = 'ingredient/' + ingredient.id;
+  const batch = event.batchId && find(ctx.data,'batches',event.batchId);
+  const amount = fmt.stockQuantity(showAmount(event.grams,ingredient),ingredient.unit,true);
+  const info = [['Data',fmt.fullDate(event.date)]];
+  if (event.type === 'correction' && event.measured != null) {
+    info.push(['Stan po korekcie',fmt.stockQuantity(showAmount(event.measured,ingredient),ingredient.unit)]);
+  }
+  if (event.price) {
+    const total = event.price.cents * event.grams / event.price.grams;
+    info.push(['Koszt zakupu',fmt.money(total)]);
+    if (event.priceMode !== 'total') {
+      const perLitre = event.priceMode === 'per-litre';
+      const unitMass = perLitre ? Math.round(ingredient.density * 1000) : 1000;
+      info.push(['Cena za jednostkę',fmt.money(event.price.cents * unitMass / event.price.grams) + (perLitre ? '/l' : '/kg')]);
+    }
+  }
+  if (batch) info.push(['Partia',html(batch.recipeName) + ' · ' + html(batchLabel(batch))]);
+  const action = batch ? link('Pokaż partię','batch/' + batch.id + '/' + id,'tonal') :
+    event.type !== 'batch' ? link('Edytuj','movement/' + event.type + '/' + ingredient.id + '/' + id,'tonal','edit') : '';
+  return {title:movementNames[event.type],subtitle:ingredient.name,parent,body:`<div class="stack">
+    <section class="card stack tight"><p class="display">${amount}</p>${details(info)}
+    ${event.notes ? '<p class="notes">' + html(event.notes) + '</p>' : ''}</section>
+    <div class="actions">${action}</div></div>`};
 }
 
 function newLayingStatus(cohort, state, today) {

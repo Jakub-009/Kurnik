@@ -15,6 +15,7 @@ const routes = {
   start:views.start, feed:views.feed, stock:views.warehouse, flock:views.flockView,
   recipe:views.recipeView, batch:views.batchView, ingredient:views.ingredientView, cohort:views.cohortView, 'flock-add':views.flockAdd,
   'recipe-form':forms.recipeForm, 'ingredient-form':forms.ingredientForm, movement:forms.movementForm,
+  'movement-detail':views.movementDetail, 'recipe-order':forms.recipeOrderForm,
   mix:(ctx,id) => forms.mixForm(ctx,'mix',id,history.state?.origin),
   'batch-form':(ctx,id) => forms.mixForm(ctx,'batch-form',id),
   finish:forms.finishForm, 'cohort-form':forms.cohortForm, change:forms.changeForm, settings:forms.settingsForm,
@@ -67,8 +68,8 @@ function render(focus = true, resetScroll = true) {
   const [name,...args] = route.split('/');
   const context = {
     data, derived:derive(data,displayedDate), today:displayedDate,
-    commit, confirm, go, setCurrent, importBackup, exportBackup,
-    dirty:() => { dirty = true; }
+    commit, confirm, go, done:complete, setCurrent, importBackup, exportBackup,
+    dirty:(value = true) => { dirty = value; }
   };
   screen = Object.hasOwn(routes,name) ? routes[name](context,...args) : views.missing();
   app.innerHTML = views.frame(screen,route);

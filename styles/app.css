@@ -60,8 +60,8 @@ legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
 .home-forecast { display: grid; gap: 2px; }
 .home-forecast .forecast-line { justify-content: end; }
 .stock-value { font-size: 1.125rem; color: var(--md-sys-color-primary); }
-.recipe-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 4px 8px; align-items: start; }
-.recipe-line-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.recipe-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 48px; gap: 4px 8px; align-items: start; }
+.recipe-line > .icon-button { margin-top: 26px; }
 .recipe-line:not(:last-child) { border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .mix-oil { margin-block: 8px; background: var(--md-sys-color-secondary-container); }
 .oil-check { display: flex; align-items: center; gap: 8px; min-height: 48px; }
@@ -88,3 +88,11 @@ legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
 .stock-projection + .list-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
 html:has(.page--form):has(#snackbar:not([hidden])) { scroll-padding-bottom: calc(80px + var(--safe-bottom)); }
 body:has(#snackbar:not([hidden])) .page--form { padding-bottom: calc(80px + var(--safe-bottom)); }
+
+.order-list { margin: 0; padding: 0; list-style: none; }
+.order-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px 4px 16px; min-height: 56px; }
+.order-row + .order-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
+.order-row--dragging { background: var(--md-sys-color-secondary-container); }
+.order-handle { touch-action: none; cursor: grab; font-size: 24px; }
+.order-row--dragging .order-handle { cursor: grabbing; }
+.current-estimate dd { font-size: 1.25rem; font-weight: 700; }

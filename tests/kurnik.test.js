@@ -5,7 +5,7 @@ import {averageFlock,batchBaseMass,batchOil,batchResult,cohortAge,cohortState,da
 import {decodeBackup,encodeBackup} from '../src/backup.js';
 import {record} from '../src/db.js';
 import {derive,putBatch,removeBatch} from '../src/model.js';
-import {recipeView,start} from '../src/views.js';
+import {ingredientView,movementDetail,recipeView,start} from '../src/views.js';
 import * as fmt from '../ui/format.js';
 
 const today = '2026-11-22';
@@ -152,7 +152,7 @@ test('Start ma trzy pozycje magazynowe i odróżnia brak stanu od wpisanego zera
   };
   assert.equal(render().screen.floating,undefined);
   assert.equal((render().screen.body.match(/Stan do wpisania/g) ?? []).length,3);
-  assert.doesNotMatch(render().screen.body,/≈ 0 dni/);
+  assert.doesNotMatch(render().screen.body,/>0 dni</);
 
   data.ingredientEvents.push(
     record({ingredientId:ingredients[0].id, type:'addition', grams:100000}),
@@ -164,14 +164,14 @@ test('Start ma trzy pozycje magazynowe i odróżnia brak stanu od wpisanego zera
   assert.deepEqual(derived.stocks.slice(0,3).map(row => row.ingredient.name),['Kukurydza','Groch','Pszenica']);
   assert.equal(derived.stocks[0].outlook.days,0);
   assert.equal(derived.stocks.find(row => row.ingredient.name === 'Dolmix DN').outlook,null);
-  assert.match(screen.body,/≈ 0 dni/);
+  assert.match(screen.body,/>0 dni</);
 });
 
 test('mieszanie pokazuje zaokrąglenie bez utraty precyzji w partii', () => {
   const {composition} = fixture();
   const [wheat] = scaleRecipe(composition,100000);
   assert.equal(wheat.grams,33717);
-  assert.equal(fmt.mixingQuantity(wheat.grams / 1000),'≈ 33,7 kg');
+  assert.equal(fmt.mixingQuantity(wheat.grams / 1000),'33,7 kg');
   assert.equal(fmt.mixingQuantity(1.25),'1,25 kg');
   assert.equal(fmt.mixingQuantity(.003),'0,003 kg');
 });
@@ -288,4 +288,56 @@ test('receptura zachowuje pozycję dodatku i przelicza jego litraż niezależnie
   assert.match(body,/Pszenica[\s\S]*Olej[\s\S]*Dodatek[\s\S]*Kukurydza/);
   const restored = decodeBackup(encodeBackup(data,today));
   assert.deepEqual(restored.recipes[0].items,recipe.items);
+});
+
+test('magazyn pokazuje 22,5 kg po zużyciu 2,5 kg z 25 kg i prowadzi do podglądu ruchu', () => {
+  const {data,ingredients,recipe} = fixture();
+  const ingredient = ingredients[0];
+  const purchase = record({ingredientId:ingredient.id,type:'purchase',date:'2026-11-15',grams:25000,
+    price:{cents:200,grams:1000},priceMode:'per-kg',notes:'Dostawa'});
+  data.ingredientEvents.push(purchase);
+  const batch = putBatch(data,null,{recipeId:recipe.id,recipeName:recipe.name,mass:2500,date:today,start:today,
+    end:null,items:[{ingredientId:ingredient.id,name:ingredient.name,unit:'kg',density:null,grams:2500,price:null}]});
+  const usage = data.ingredientEvents.find(event => event.batchId === batch.id);
+  const ctx = {data,derived:derive(data,today),today};
+  const page = ingredientView(ctx,ingredient.id);
+  assert.match(page.body,/>\s*22,5 kg<\/p>/);
+  assert.match(page.body,/>−2,5 kg<\/span>/);
+  assert.ok(page.body.includes('#movement-detail/' + usage.id));
+  assert.doesNotMatch(page.body,/#movement\/purchase/);
+  const purchased = movementDetail(ctx,purchase.id);
+  assert.match(purchased.body,/Koszt zakupu[\s\S]*50,00/);
+  assert.ok(purchased.body.includes('#movement/purchase/' + ingredient.id + '/' + purchase.id));
+  const consumed = movementDetail(ctx,usage.id);
+  assert.ok(consumed.body.includes('#batch/' + batch.id + '/' + usage.id));
+  assert.equal(fmt.stockQuantity(22.501,'kg'),'22,501 kg');
+  assert.equal(fmt.stockQuantity(25,'kg',true),'+25 kg');
+});
+
+test('Start identyfikuje prognozowaną partię i szacuje 70 kg dla samotnej partii z 15.11', () => {
+  const {data,recipe,ingredients} = fixture();
+  const now = '2026-11-23';
+  const batch = (date,recipeName) => record({mass:100000,date,start:date,end:null,recipeName,
+    recipeId:recipe.id,items:[{ingredientId:ingredients[0].id,grams:100000}]});
+  const recent = batch('2026-11-15','Nowsza');
+  data.batches.push(recent);
+  let derived = derive(data,now);
+  assert.equal(derived.active.remaining,70400);
+  let body = start({data,derived,today:now}).body;
+  assert.match(body,/Partia z 15\.11 · podawanie od 15\.11/);
+  assert.match(body,/<dt>Zostało<\/dt><dd>70 kg<\/dd>/);
+  assert.match(body,/<dt>Wystarczy na<\/dt><dd>19 dni<\/dd>/);
+  assert.doesNotMatch(body,/≈/);
+
+  const older = batch('2026-11-02','Wcześniejsza');
+  data.batches.push(older);
+  derived = derive(data,now);
+  assert.equal(derived.active.batch.id,older.id);
+  assert.equal(derived.active.remaining,22300);
+  assert.equal(derived.openStatus.find(entry => entry.batch.id === recent.id).remaining,100000);
+  body = start({data,derived,today:now}).body;
+  assert.match(body,/Partia z 02\.11/);
+  assert.match(body,/<dt>Zostało<\/dt><dd>22 kg<\/dd>/);
+  assert.match(body,/<dt>Wystarczy na<\/dt><dd>6 dni<\/dd>/);
+  assert.match(body,/Inne otwarte partie: 1/);
 });

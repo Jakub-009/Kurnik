@@ -114,19 +114,10 @@ export function recipeForm(ctx, id) {
     const ingredient = ingredients.find(row => row.id === ingredientId);
     return `<div class="recipe-line" data-recipe-line="${index}">${select('ingredient-' + index,'Składnik',options(),ingredientId)}
       ${field('amount-' + index,ingredient ? 'Ilość (' + ingredient.unit + ')' : 'Ilość',asInput(amount),{mode:'decimal',length:17})}
-      <div class="recipe-line-actions"><button type="button" class="icon-button" aria-label="Przesuń w górę" data-action="up:${index}">↑</button>
-      <button type="button" class="icon-button" aria-label="Przesuń w dół" data-action="down:${index}">↓</button>
-      ${iconButton('Usuń pozycję','del','drop:' + index)}</div></div>`;
+      ${iconButton('Usuń pozycję','del','drop:' + index)}</div>`;
   };
   const items = old ? old.items.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
   const lines = () => [...document.querySelectorAll('[data-recipe-line]')];
-  function updateOrderButtons() {
-    const ordered = lines();
-    ordered.forEach((line,index) => {
-      line.querySelector('[data-action^="up:"]').disabled = index === 0;
-      line.querySelector('[data-action^="down:"]').disabled = index === ordered.length - 1;
-    });
-  }
   function updateAmountLabel(selectInput) {
     const ingredient = ingredients.find(row => row.id === selectInput.value);
     const index = selectInput.closest('[data-recipe-line]').dataset.recipeLine;
@@ -141,7 +132,6 @@ export function recipeForm(ctx, id) {
         ${ingredientFields('new-',null)}<div class="actions">${button('Dodaj składnik','use-ingredient','tonal')}
         ${button('Anuluj','cancel-ingredient')}</div></fieldset>
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`, 'Zapisz', Boolean(old)),
-    mount: updateOrderButtons,
     change(target) {
       updateIngredientFields('new-',target);
       if (target.id.startsWith('ingredient-')) updateAmountLabel(target);
@@ -196,7 +186,6 @@ export function recipeForm(ctx, id) {
           } else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
           const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
           document.getElementById('amount-' + index).focus();
-          updateOrderButtons();
           ctx.dirty();
         }
         editor.hidden = true;
@@ -210,23 +199,114 @@ export function recipeForm(ctx, id) {
       if (action === 'add-line') {
         document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine());
         document.getElementById('ingredient-' + (next - 1)).focus();
-        updateOrderButtons();
         ctx.dirty();
       }
-      const [command,index] = action.split(':');
-      if (['up','down','drop'].includes(command)) {
-        const line = document.getElementById('ingredient-' + index).closest('[data-recipe-line]');
-        if (command === 'drop') line.remove();
-        if (command === 'up') line.previousElementSibling?.before(line);
-        if (command === 'down') line.nextElementSibling?.after(line);
-        updateOrderButtons();
-        if (command !== 'drop') {
-          const control = line.querySelector('[data-action="' + action + '"]');
-          (control.disabled ? line.querySelector('select') : control).focus({preventScroll:true});
-        }
+      if (action.startsWith('drop:')) {
+        document.getElementById('ingredient-' + action.slice(5)).closest('[data-recipe-line]').remove();
         ctx.dirty();
       }
       if (action === 'delete') return ctx.commit(data => removeRecipe(data,id),'feed','Usunięto');
+    }};
+}
+
+export function recipeOrderForm(ctx, id) {
+  const recipe = get(ctx,'recipes',id);
+  if (!recipe) return missing('feed');
+  const parent = 'recipe/' + id;
+  const initial = recipe.items.map(item => item.ingredientId);
+  const list = () => document.getElementById('recipe-order-list');
+  const order = () => [...list().children].map(item => item.dataset.ingredient);
+  const changed = () => order().some((ingredientId,index) => ingredientId !== initial[index]);
+  const ingredientNames = new Map(ctx.derived.ingredients.map(item => [item.id,item]));
+  const rows = initial.map(ingredientId => {
+    const ingredient = ingredientNames.get(ingredientId);
+    return `<li class="order-row" data-ingredient="${html(ingredientId)}">
+      <span class="grow">${html(ingredient.name)}${isMixingOil(ingredient) ? ' <small>Dodatek</small>' : ''}</span>
+      <button class="icon-button order-handle" type="button" aria-label="${html('Przenieś: ' + ingredient.name)}"
+        aria-describedby="reorder-help"><span aria-hidden="true">⠿</span></button></li>`;
+  }).join('');
+
+  function announce(row) {
+    const index = order().indexOf(row.dataset.ingredient);
+    const name = ingredientNames.get(row.dataset.ingredient).name;
+    document.getElementById('order-status').textContent = name + ', pozycja ' + fmt.number(index + 1) + ' z ' + fmt.number(initial.length);
+    ctx.dirty(changed());
+  }
+
+  function bindDrag() {
+    const container = list();
+    let drag;
+    let frameId;
+    const midpoint = row => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.top + bounds.height / 2;
+    };
+
+    function placeRow(y) {
+      const {row} = drag;
+      while (row.previousElementSibling && y < midpoint(row.previousElementSibling)) row.previousElementSibling.before(row);
+      while (row.nextElementSibling && y > midpoint(row.nextElementSibling)) row.nextElementSibling.after(row);
+    }
+
+    function scrollDuringDrag() {
+      if (!drag || !container.isConnected) return;
+      const edge = 80;
+      const bottom = window.innerHeight - edge;
+      const y = drag.y;
+      const speed = y < edge ? -Math.min(16,(edge - y) / 4) : y > bottom ? Math.min(16,(y - bottom) / 4) : 0;
+      if (speed) {
+        window.scrollBy(0,speed);
+        placeRow(y);
+      }
+      frameId = requestAnimationFrame(scrollDuringDrag);
+    }
+
+    container.addEventListener('pointerdown',event => {
+      const handle = event.target.closest('.order-handle');
+      if (!handle || event.button !== 0 || drag) return;
+      const row = handle.closest('li');
+      drag = {row,id:event.pointerId,y:event.clientY,previous:[...container.children]};
+      container.setPointerCapture(event.pointerId);
+      row.classList.add('order-row--dragging');
+      frameId = requestAnimationFrame(scrollDuringDrag);
+      event.preventDefault();
+    });
+    container.addEventListener('pointermove',event => {
+      if (event.pointerId !== drag?.id) return;
+      drag.y = event.clientY;
+      placeRow(drag.y);
+    });
+    function finishDrag(event) {
+      if (event.pointerId !== drag?.id) return;
+      const {row,previous} = drag;
+      drag = null;
+      cancelAnimationFrame(frameId);
+      row.classList.remove('order-row--dragging');
+      if (event.type === 'pointerup') announce(row);
+      else container.append(...previous);
+    }
+    for (const event of ['pointerup','pointercancel','lostpointercapture']) container.addEventListener(event,finishDrag);
+
+    container.addEventListener('keydown',event => {
+      const handle = event.target.closest('.order-handle');
+      if (!handle || !['ArrowUp','ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const row = handle.closest('li');
+      if (event.key === 'ArrowUp') row.previousElementSibling?.before(row);
+      else row.nextElementSibling?.after(row);
+      handle.focus({preventScroll:true});
+      announce(row);
+    });
+  }
+
+  return {title:'Zmień kolejność',subtitle:recipe.name,parent,form:true,mount:bindDrag,
+    body:form(`<p class="muted" id="reorder-help">Przeciągnij składniki za uchwyt. Z klawiatury użyj ↑ i ↓.</p>
+      <ol class="list order-list" id="recipe-order-list">${rows}</ol><p class="muted" id="order-status" role="status"></p>`),
+    submit() {
+      if (!changed()) return ctx.done(parent);
+      const items = new Map(recipe.items.map(item => [item.ingredientId,item]));
+      const reordered = order().map(ingredientId => items.get(ingredientId));
+      return ctx.commit(data => put(data,'recipes',recipe,{items:reordered}),parent);
     }};
 }
 
@@ -235,7 +315,8 @@ export function movementForm(ctx, type, ingredientId, eventId) {
   const old = get(ctx,'ingredientEvents',eventId);
   if (eventId && (!old || old.type !== type || old.ingredientId !== ingredientId)) return missing('stock');
   let ingredient = get(ctx,'ingredients',ingredientId) ?? ctx.derived.ingredients[0];
-  const parent = ingredientId ? 'ingredient/' + ingredientId : 'stock';
+  const ingredientRoute = ingredientId ? 'ingredient/' + ingredientId : 'stock';
+  const parent = old ? 'movement-detail/' + old.id : ingredientRoute;
   if (!ingredient) return {title:movementLabels[type],parent:'stock',
     body:empty('Najpierw dodaj składnik do magazynu.',link('Dodaj składnik','ingredient-form','tonal'))};
   const correction = type === 'correction';
@@ -251,7 +332,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
     return stock(earlier,ingredient.id,old?.id);
   };
   const initialAmount = old ? showAmount(correction ? old.measured ?? (currentStock() + old.grams) : Math.abs(old.grams), ingredient) : null;
-  const signed = grams => (grams > 0 ? '+' : '') + fmt.quantity(showAmount(grams,ingredient),ingredient.unit);
+  const signed = (grams, sign = true) => fmt.stockQuantity(showAmount(grams,ingredient),ingredient.unit,sign);
   const initialPrice = item => old ? old.price : item.price;
   const defaultMode = old?.priceMode ?? 'per-kg';
   const shownPrice = (price, mode, item) => {
@@ -272,7 +353,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
   const updateDifference = () => {
     if (!correction) return;
     const output = document.getElementById('difference');
-    document.getElementById('calculated-stock').textContent = signed(currentStock()).replace(/^\+/,'');
+    document.getElementById('calculated-stock').textContent = signed(currentStock(),false);
     try { output.textContent = 'Różnica ' + signed(correctionDelta(getQuantity())); }
     catch { output.textContent = ''; }
   };
@@ -281,7 +362,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
     body:form(`${ingredientId ? '' : select('ingredient','Składnik',selection.map(row => [row.id,row.name]),ingredient.id)}
       ${changeRow('Data',fmt.fullDate(date),'date')}
       <div id="date-wrap" hidden>${dateInput(ctx,'date','Data wpisu',date)}</div>
-      ${correction ? '<p>Stan wyliczony <strong id="calculated-stock">' + signed(currentStock()).replace(/^\+/,'') + '</strong></p>' : ''}
+      ${correction ? '<p>Stan wyliczony <strong id="calculated-stock">' + signed(currentStock(),false) + '</strong></p>' : ''}
       ${numberField('quantity',correction ? 'Jest faktycznie' : 'Ilość',asInput(initialAmount),ingredient.unit)}
       ${correction ? '<p id="difference" role="status">' + (old ? 'Różnica ' + signed(old.grams) : '') + '</p>' : ''}
       ${add ? select('addition-kind','Skąd pochodzi składnik?',[['addition','Własny lub otrzymany'],['purchase','Zakup']],'addition') : ''}
@@ -338,7 +419,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
         wrap.hidden = !wrap.hidden;
         if (!wrap.hidden) document.getElementById('date').focus();
       }
-      if (action === 'delete') return ctx.commit(data => remove(data,'ingredientEvents',eventId),parent,'Usunięto');
+      if (action === 'delete') return ctx.commit(data => remove(data,'ingredientEvents',eventId),ingredientRoute,'Usunięto');
     }};
 }
 
@@ -472,7 +553,8 @@ export function mixForm(ctx, name, id, origin) {
   return {title:editing ? 'Edytuj partię' : 'Mieszam',subtitle:original?.recipeName,parent,form:true,
     body:form(`${editing ? '' : `<fieldset><legend>Receptura</legend><div class="actions" id="recipe-chips">${recipeChips()}</div></fieldset>
       <fieldset><legend>Masa składników bazowych</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>`}
-      <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend><div id="checklist">${checkList(oilSection())}</div></fieldset>
+      <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend>
+        <p class="muted">Ilości na liście są zaokrąglone.</p><div id="checklist">${checkList(oilSection())}</div></fieldset>
       <div class="value-row"><span>Masa składników bazowych</span><strong id="actual-mass">${fmt.mixingQuantity(batchMass()/1000)}</strong></div>
       <div id="date-rows">${dateSection()}</div>`,editing ? 'Zapisz' : 'Zatwierdź partię',editing),
     change(element) {
@@ -574,7 +656,7 @@ export function finishForm(ctx, id, origin) {
   function preview({end,remaining}) {
     const {daily,days} = batchResult({...batch,end,remaining});
     return details([['Dni podawania',fmt.days(days)],['Zużycie dzienne',fmt.number(daily / 1000,3) + ' kg/dzień'],
-      ...(daily > 0 ? [['Na ile starcza 100 kg','≈ ' + fmt.days(100000/daily) + ' <small>prognoza</small>']] : [])]);
+      ...(daily > 0 ? [['Na ile starcza 100 kg',fmt.days(100000/daily) + ' <small>prognoza</small>']] : [])]);
   }
   return {title:batch.end ? 'Edytuj zakończenie' : 'Zakończ partię',subtitle:batch.recipeName,parent,form:true,
     body:form(`${dateField('end','Pierwszy dzień bez tej partii',date,earliest)}
