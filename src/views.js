@@ -96,11 +96,11 @@ export function feed(ctx) {
     </div>`};
 }
 
-function costRows(cost, settings, {batch = false, consumed, daily, estimated = false} = {}) {
+function costRows(cost, settings, {batch = false, consumed, daily, estimated = false, title = 'Koszt mieszanki'} = {}) {
   if (cost.kind === 'none') return '';
   const content = [];
   const value = text => estimated ? '≈ ' + text + ' <small>prognoza</small>' : text;
-  if (cost.kind === 'partial') content.push(['Koszt mieszanki','Brak danych']);
+  if (cost.kind === 'partial') content.push([title,'Brak danych']);
   if (cost.kind === 'full') {
     if (batch) content.push(['Koszt partii', fmt.money(cost.cents)]);
     if (!batch) content.push(['Koszt 100 kg', fmt.money(cost.perKg * 100)]);
@@ -118,7 +118,7 @@ function costRows(cost, settings, {batch = false, consumed, daily, estimated = f
       }
     }
   }
-  return '<section class="card stack tight"><h2>Koszt mieszanki</h2>' + details(content) + '</section>';
+  return '<section class="card stack tight"><h2>' + title + '</h2>' + details(content) + '</section>';
 }
 
 export function recipeView(ctx, id) {
@@ -126,17 +126,25 @@ export function recipeView(ctx, id) {
   if (!recipe) return missing('feed');
   const composition = recipeComposition(recipe, ctx.derived.ingredients);
   const hasBase = composition.items.length > 0;
-  const precise = (value, unit) => fmt.number(value, 2) + ' ' + unit;
+  const precise = (value, unit) => fmt.number(value, unit === 'l' ? 3 : 2) + ' ' + unit;
+  const baseItems = new Map(composition.items.map(item => [item.ingredientId,item]));
+  const oils = new Map(ctx.derived.ingredients.filter(isMixingOil).map(item => [item.id,item]));
+  const hasOil = recipe.items.some(item => oils.has(item.ingredientId));
+  const recipeRows = recipe.items.map(({ingredientId,amount}) => {
+    const oil = oils.get(ingredientId);
+    if (oil) return row({name:oil.name,symbol:'stock',sub:'<span class="tag">Dodatek</span>',value:precise(amount / 1000,'l')});
+    const item = baseItems.get(ingredientId);
+    return row({name:item.name,symbol:'stock',sub:fmt.percent(item.share) + ' · ' +
+      precise(item.amount / 1000 * 100000 / composition.mass,item.unit) + ' na 100 kg',
+      value:precise(item.amount / 1000,item.unit)});
+  }).join('');
   return {title:recipe.name, parent:'feed', body:`<div class="stack">
     <section class="card stack tight"><h2>Receptura</h2>${hasBase ? '<p class="display">' + precise(composition.mass / 1000,'kg') + '</p>'
         : '<p>Dodaj składniki bazowe do receptury.</p>'}
       ${recipe.current ? '<div><span class="tag">Aktualna</span></div>' : ''}
       ${recipe.notes ? '<p class="notes">' + html(recipe.notes) + '</p>' : ''}</section>
-    ${hasBase ? `<section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${composition.items.map(item =>
-      row({name:item.name, symbol:'stock', sub:fmt.percent(item.share) + ' · ' +
-        precise(item.amount / 1000 * 100000 / composition.mass, item.unit) + ' na 100 kg',
-        value:precise(item.amount / 1000, item.unit)})).join('')}</div></section>` : ''}
-    ${costRows(mixtureCost(composition.items), ctx.derived.settings)}
+    <section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${recipeRows}</div></section>
+    ${costRows(mixtureCost(composition.items),ctx.derived.settings,hasOil ? {title:'Koszt bazy'} : {})}
     <div class="actions">${link('Edytuj', 'recipe-form/' + id, 'tonal', 'edit')}
       ${recipe.current ? '' : button('Ustaw jako aktualną', 'current', 'tonal', 'check')}
       ${hasBase ? link('Mieszam','mix/' + id,'','plus') : ''}</div></div>`,

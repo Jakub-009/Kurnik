@@ -60,8 +60,12 @@ legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
 .home-forecast { display: grid; gap: 2px; }
 .home-forecast .forecast-line { justify-content: end; }
 .stock-value { font-size: 1.125rem; color: var(--md-sys-color-primary); }
-.recipe-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 48px; gap: 6px; align-items: start; }
-.recipe-line .icon-button { margin-top: 26px; }
+.recipe-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 4px 8px; align-items: start; }
+.recipe-line-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.recipe-line:not(:last-child) { border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.mix-oil { margin-block: 8px; background: var(--md-sys-color-secondary-container); }
+.oil-check { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+.oil-check input { width: 20px; height: 20px; accent-color: var(--md-sys-color-primary); }
 .recipe-line small { display: block; }
 .checklist-row label span { min-width: 0; }
 .checklist-row .button { white-space: normal; word-break: normal; font-variant-numeric: tabular-nums; }

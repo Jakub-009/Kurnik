@@ -30,6 +30,19 @@ export function recipeBaseItems(recipe, ingredients) {
   });
 }
 
+export function recipeOil(recipe, ingredients) {
+  const position = recipe.items.findIndex(item => {
+    const ingredient = ingredients.find(row => row.id === item.ingredientId);
+    return ingredient && isMixingOil(ingredient);
+  });
+  if (position < 0) return null;
+  return {...recipe.items[position],position};
+}
+
+export function scaledOilMl(oil, baseMass, targetMass) {
+  return Math.round(oil.amount * targetMass / baseMass);
+}
+
 export const batchOil = batch => batch.items.find(item => item.oil);
 export const batchBaseMass = batch => batch.mass - (batchOil(batch)?.grams ?? 0);
 

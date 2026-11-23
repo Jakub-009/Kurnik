@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {averageFlock,batchBaseMass,batchOil,batchResult,cohortAge,cohortState,dailyAverage,flockCount,ingredientMass,isMixingOil,mixtureCost,recipeComposition,
+import {averageFlock,batchBaseMass,batchOil,batchResult,cohortAge,cohortState,dailyAverage,flockCount,ingredientMass,isMixingOil,mixtureCost,recipeComposition,recipeOil,scaledOilMl,
   remainingMix,savings,scaleRecipe,stock,supplyForecast,validCohortHistory} from '../src/calc/index.js';
 import {decodeBackup,encodeBackup} from '../src/backup.js';
 import {record} from '../src/db.js';
@@ -270,4 +270,22 @@ test('partia zapisuje litry oleju, odejmuje zapas i liczy jego koszt obok masy b
   assert.deepEqual(restored.batches[0],batch);
   batch.items.at(-1).millilitres = 1000;
   assert.throws(() => decodeBackup(encodeBackup(data,today)),/niespójne/);
+});
+
+test('receptura zachowuje pozycję dodatku i przelicza jego litraż niezależnie od bazy', () => {
+  const {data,ingredients,recipe} = fixture();
+  ingredients[6].oil = true;
+  const oilRow = recipe.items.pop();
+  recipe.items.splice(1,0,oilRow);
+  const oil = recipeOil(recipe,ingredients);
+  const composition = recipeComposition(recipe,ingredients);
+  assert.equal(oil.position,1);
+  assert.equal(oil.ingredientId,ingredients[6].id);
+  assert.equal(composition.mass,49500);
+  assert.equal(scaledOilMl(oil,composition.mass,50000),1010);
+  assert.equal(scaledOilMl(oil,composition.mass,100000),2020);
+  const body = recipeView({data,derived:derive(data,today),today},recipe.id).body;
+  assert.match(body,/Pszenica[\s\S]*Olej[\s\S]*Dodatek[\s\S]*Kukurydza/);
+  const restored = decodeBackup(encodeBackup(data,today));
+  assert.deepEqual(restored.recipes[0].items,recipe.items);
 });

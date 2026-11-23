@@ -1,4 +1,4 @@
-import {addDays, batchOil, batchResult, cohortEvents, cohortOrigin, cohortState, flockEventKind, ingredientMass, isMixingOil, recipeBaseItems, recipeComposition, scaleRecipe, stock, validCohortHistory} from './calc/index.js';
+import {addDays, batchOil, batchResult, cohortEvents, cohortOrigin, cohortState, flockEventKind, ingredientMass, isMixingOil, recipeBaseItems, recipeComposition, recipeOil, scaleRecipe, scaledOilMl, stock, validCohortHistory} from './calc/index.js';
 import {live,record} from './db.js';
 import {find, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
 import {missing} from './views.js';
@@ -73,9 +73,10 @@ export function ingredientForm(ctx, id) {
       const fields = ingredientValues('',ctx.derived.ingredients,id,referenced ? old.unit : null);
       if (old && fields.oil && !isMixingOil(old)) {
         const updated = ctx.derived.ingredients.map(ingredient => ingredient.id === id ? {...old,...fields} : ingredient);
-        if (ctx.derived.recipes.some(recipe => recipe.items.some(item => item.ingredientId === id) &&
-          !recipeBaseItems(recipe,updated).length)) {
-          throw new FieldError('role','Ta zmiana pozostawiłaby recepturę bez składników bazowych.');
+        for (const recipe of ctx.derived.recipes.filter(recipe => recipe.items.some(item => item.ingredientId === id))) {
+          const baseCount = recipeBaseItems(recipe,updated).length;
+          if (!baseCount) throw new FieldError('role','Ta zmiana pozostawiłaby recepturę bez składników bazowych.');
+          if (recipe.items.length - baseCount > 1) throw new FieldError('role','Receptura ma już inny olej.');
         }
       }
       if (old && !fields.oil && fields.density !== old.density) {
@@ -103,52 +104,74 @@ export function recipeForm(ctx, id) {
   const old = get(ctx,'recipes',id);
   if (id && !old) return missing('feed');
   const parent = old ? 'recipe/' + id : 'feed';
-  const ingredients = ctx.derived.ingredients.filter(row => !isMixingOil(row)).sort((a,b) => a.name.localeCompare(b.name,'pl'));
+  const ingredients = ctx.derived.ingredients.slice().sort((a,b) => a.name.localeCompare(b.name,'pl'));
   const drafted = [];
-  const optionLabel = row => row.name + ' (' + row.unit + ')';
+  const optionLabel = row => row.name + (isMixingOil(row) ? ' (dodatek, l)' : ' (' + row.unit + ')');
   const options = () => [['','Wybierz'],...ingredients.map(row => [row.id,optionLabel(row)])];
   let next = 0;
   const readLine = (ingredientId = '', amount) => {
     const index = next++;
+    const ingredient = ingredients.find(row => row.id === ingredientId);
     return `<div class="recipe-line" data-recipe-line="${index}">${select('ingredient-' + index,'Składnik',options(),ingredientId)}
-      ${field('amount-' + index,'Ilość',asInput(amount),{mode:'decimal',length:17})}
-      ${iconButton('Usuń pozycję','del','drop:' + index)}</div>`;
+      ${field('amount-' + index,ingredient ? 'Ilość (' + ingredient.unit + ')' : 'Ilość',asInput(amount),{mode:'decimal',length:17})}
+      <div class="recipe-line-actions"><button type="button" class="icon-button" aria-label="Przesuń w górę" data-action="up:${index}">↑</button>
+      <button type="button" class="icon-button" aria-label="Przesuń w dół" data-action="down:${index}">↓</button>
+      ${iconButton('Usuń pozycję','del','drop:' + index)}</div></div>`;
   };
-  const base = old ? recipeBaseItems(old,ctx.derived.ingredients) : [];
-  const items = base.length ? base.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
+  const items = old ? old.items.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
+  const lines = () => [...document.querySelectorAll('[data-recipe-line]')];
+  function updateOrderButtons() {
+    const ordered = lines();
+    ordered.forEach((line,index) => {
+      line.querySelector('[data-action^="up:"]').disabled = index === 0;
+      line.querySelector('[data-action^="down:"]').disabled = index === ordered.length - 1;
+    });
+  }
+  function updateAmountLabel(selectInput) {
+    const ingredient = ingredients.find(row => row.id === selectInput.value);
+    const index = selectInput.closest('[data-recipe-line]').dataset.recipeLine;
+    document.querySelector('label[for="amount-' + index + '"]').textContent =
+      ingredient ? 'Ilość (' + ingredient.unit + ')' : 'Ilość';
+  }
   return {title:old ? 'Edytuj recepturę' : 'Dodaj recepturę',parent,form:true,
     body:form(`${field('name','Nazwa',old?.name,{length:80})}<fieldset class="stack tight"><legend>Składniki</legend>
       <div class="stack tight" id="recipe-lines">${items}</div><div class="actions">
       ${button('Dodaj pozycję','add-line','tonal','plus')}${button('Utwórz składnik','new-ingredient')}</div></fieldset>
-      <p id="oil-draft" class="muted" role="status" hidden></p><fieldset class="card stack" id="new-ingredient" hidden><legend>Nowy składnik</legend>
+      <fieldset class="card stack" id="new-ingredient" hidden><legend>Nowy składnik</legend>
         ${ingredientFields('new-',null)}<div class="actions">${button('Dodaj składnik','use-ingredient','tonal')}
         ${button('Anuluj','cancel-ingredient')}</div></fieldset>
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`, 'Zapisz', Boolean(old)),
+    mount: updateOrderButtons,
     change(target) {
       updateIngredientFields('new-',target);
+      if (target.id.startsWith('ingredient-')) updateAmountLabel(target);
     },
     submit() {
       const name = readName(value('name'));
       const seen = new Set();
-      const written = [...document.querySelectorAll('[data-recipe-line]')].map(line => {
+      let oilCount = 0;
+      const written = lines().map(line => {
         const index = line.dataset.recipeLine;
         const ingredientId = value('ingredient-' + index);
         const ingredient = ingredients.find(row => row.id === ingredientId);
         if (!ingredient) throw new FieldError('ingredient-' + index,'Wybierz składnik.');
         if (seen.has(ingredientId)) throw new FieldError('ingredient-' + index,'Ten składnik został już dodany.');
         seen.add(ingredientId);
+        if (isMixingOil(ingredient) && ++oilCount > 1) {
+          throw new FieldError('ingredient-' + index,'Wybierz jeden olej do receptury.');
+        }
         const amount = readNumber(value('amount-' + index),'amount-' + index,amountOptions);
         physicalMass(amount,ingredient,'amount-' + index);
         return {ingredientId,amount:Math.round(amount * 1000)};
       });
-      if (!written.length) throw new FieldError('','Dodaj co najmniej jeden składnik.');
+      if (written.length === oilCount) throw new FieldError('','Dodaj co najmniej jeden składnik bazowy.');
       if (!document.getElementById('new-ingredient').hidden) {
         throw new FieldError('new-name','Dodaj składnik do receptury albo anuluj jego tworzenie.');
       }
       return ctx.commit(data => {
         const used = new Set(written.map(item => item.ingredientId));
         for (const ingredient of drafted) {
-          if (ingredient.oil || used.has(ingredient.id)) put(data,'ingredients',null,ingredient);
+          if (used.has(ingredient.id)) put(data,'ingredients',null,ingredient);
         }
         put(data,'recipes',old,{name,items:written,notes:text('notes'),current:old?.current ?? !live(data.recipes).length});
       },parent);
@@ -163,20 +186,17 @@ export function recipeForm(ctx, id) {
         if (action === 'use-ingredient') {
           const ingredient = {id:crypto.randomUUID(),...ingredientValues('new-',[...ctx.derived.ingredients,...drafted]),price:null};
           drafted.push(ingredient);
-          if (ingredient.oil) {
-            const notice = document.getElementById('oil-draft');
-            notice.hidden = false;
-            notice.textContent = 'Olej będzie dostępny na ekranie „Mieszam” po zapisaniu receptury.';
-          } else {
-            ingredients.push(ingredient);
-            const selectors = [...document.querySelectorAll('#recipe-lines select')];
-            const blank = selectors.find(item => !item.value);
-            for (const item of selectors) item.add(new Option(optionLabel(ingredient),ingredient.id));
-            if (blank) blank.value = ingredient.id;
-            else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
-            const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
-            document.getElementById('amount-' + index).focus();
-          }
+          ingredients.push(ingredient);
+          const selectors = [...document.querySelectorAll('#recipe-lines select')];
+          const blank = selectors.find(item => !item.value);
+          for (const item of selectors) item.add(new Option(optionLabel(ingredient),ingredient.id));
+          if (blank) {
+            blank.value = ingredient.id;
+            updateAmountLabel(blank);
+          } else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
+          const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
+          document.getElementById('amount-' + index).focus();
+          updateOrderButtons();
           ctx.dirty();
         }
         editor.hidden = true;
@@ -190,10 +210,20 @@ export function recipeForm(ctx, id) {
       if (action === 'add-line') {
         document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine());
         document.getElementById('ingredient-' + (next - 1)).focus();
+        updateOrderButtons();
         ctx.dirty();
       }
-      if (action.startsWith('drop:')) {
-        document.querySelector('[data-recipe-line="' + action.slice(5) + '"]').remove();
+      const [command,index] = action.split(':');
+      if (['up','down','drop'].includes(command)) {
+        const line = document.getElementById('ingredient-' + index).closest('[data-recipe-line]');
+        if (command === 'drop') line.remove();
+        if (command === 'up') line.previousElementSibling?.before(line);
+        if (command === 'down') line.nextElementSibling?.after(line);
+        updateOrderButtons();
+        if (command !== 'drop') {
+          const control = line.querySelector('[data-action="' + action + '"]');
+          (control.disabled ? line.querySelector('select') : control).focus({preventScroll:true});
+        }
         ctx.dirty();
       }
       if (action === 'delete') return ctx.commit(data => removeRecipe(data,id),'feed','Usunięto');
@@ -333,12 +363,20 @@ export function mixForm(ctx, name, id, origin) {
   }
   let selected = new Set();
   let editedIndex = null;
+  let configuredOil = null;
+  let defaultOilMl = 0;
 
   function scale() {
-    items = scaleRecipe(recipeComposition(recipe,ingredients),target);
+    const composition = recipeComposition(recipe,ingredients);
+    items = scaleRecipe(composition,target);
+    configuredOil = recipeOil(recipe,ingredients);
+    defaultOilMl = configuredOil ? scaledOilMl(configuredOil,composition.mass,target) : 0;
     selected = new Set();
   }
   if (!editing) scale();
+  const oilPosition = () => editing
+    ? originalOil ? original.items.indexOf(originalOil) : items.length
+    : configuredOil?.position ?? items.length;
   const batchMass = () => items.reduce((sum, item) => sum + item.grams,0);
 
   function chips() {
@@ -357,37 +395,28 @@ export function mixForm(ctx, name, id, origin) {
       <div class="actions">${button('Zastosuj ilość','apply-quantity','tonal','check')}${button('Anuluj','cancel-quantity')}</div></div>`;
   }
 
-  function checkList() {
-    return items.map((item,index) => `<div class="checklist-row">
+  function checkList(oil = '') {
+    const rows = items.map((item,index) => `<div class="checklist-row">
       ${editing ? '<span class="grow">' + html(item.name) + '</span>' :
         `<label for="check-${index}"><input id="check-${index}" type="checkbox" data-check="${index}" ${selected.has(index) ? 'checked' : ''}><span>${html(item.name)}</span></label>`}
       <button class="button" type="button" data-action="quantity:${index}" aria-label="Zmień ilość: ${html(item.name)}, ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}">
-        ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}${icon('edit')}</button></div>${editedIndex === index ? itemEditor(index) : ''}`).join('');
+        ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}${icon('edit')}</button></div>${editedIndex === index ? itemEditor(index) : ''}`);
+    rows.splice(oilPosition(),0,`<div id="oil-slot">${oil}</div>`);
+    return rows.join('');
   }
 
   function oilSection() {
     const oilOptions = oils.filter(oil => !items.some(item => item.ingredientId === oil.id));
-    const oilSelect = select('oil','Olej (opcjonalnie)',[['','Bez oleju'],...oilOptions.map(oil => [oil.id,oil.name])],
-      originalOil?.ingredientId ?? '');
-    return `<div id="mix-oil" class="stack tight">
+    const oilId = originalOil?.ingredientId ?? configuredOil?.ingredientId ?? '';
+    const millilitres = originalOil?.millilitres ?? defaultOilMl;
+    const oilSelect = select('oil','Rodzaj oleju',[['','Bez oleju'],...oilOptions.map(oil => [oil.id,oil.name])],oilId);
+    return `<div id="mix-oil" class="card stack tight mix-oil">
+      <h2>Olej · dodatek</h2>
       ${oilOptions.length ? oilSelect : '<div>' + link('Dodaj olej w magazynie','ingredient-form/oil') + '</div>'}
-      <div id="oil-volume"${originalOil ? '' : ' hidden'}>
-        ${numberField('oil-litres','Ilość oleju',asInput(originalOil ? originalOil.millilitres / 1000 : null),'l')}
+      <div id="oil-volume"${oilId ? '' : ' hidden'}>
+        ${numberField('oil-litres','Ilość oleju',asInput(millilitres ? millilitres / 1000 : null),'l')}
+        ${editing ? '' : '<label class="oil-check"><input type="checkbox" id="oil-checked"> Olej dodany</label>'}
       </div></div>`;
-  }
-
-  function refreshOilOptions() {
-    const selectOil = document.getElementById('oil');
-    const selectedOil = selectOil?.value;
-    const litres = value('oil-litres');
-    const oilBlock = document.getElementById('mix-oil');
-    oilBlock.outerHTML = oilSection();
-    const newSelect = document.getElementById('oil');
-    if (newSelect && [...newSelect.options].some(option => option.value === selectedOil)) {
-      newSelect.value = selectedOil;
-      document.getElementById('oil-litres').value = litres;
-    }
-    document.getElementById('oil-volume').hidden = !newSelect?.value;
   }
 
   function readOil() {
@@ -411,12 +440,16 @@ export function mixForm(ctx, name, id, origin) {
         ${dateField('start','Początek podawania',start,date,original?.end ? addDays(original.end,-1) : '9999-12-30')}</div>`;
   }
 
-  function renderMix() {
+  function renderMix(resetOil = false) {
+    const oilBlock = resetOil ? null : document.getElementById('mix-oil');
     if (!editing) {
       document.getElementById('mass-chips').innerHTML = chips();
       document.getElementById('recipe-chips').innerHTML = recipeChips();
     }
     document.getElementById('checklist').innerHTML = checkList();
+    const slot = document.getElementById('oil-slot');
+    if (oilBlock) slot.append(oilBlock);
+    else slot.innerHTML = oilSection();
     document.getElementById('actual-mass').textContent = fmt.mixingQuantity(batchMass()/1000);
   }
 
@@ -439,12 +472,12 @@ export function mixForm(ctx, name, id, origin) {
   return {title:editing ? 'Edytuj partię' : 'Mieszam',subtitle:original?.recipeName,parent,form:true,
     body:form(`${editing ? '' : `<fieldset><legend>Receptura</legend><div class="actions" id="recipe-chips">${recipeChips()}</div></fieldset>
       <fieldset><legend>Masa składników bazowych</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>`}
-      <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend><div id="checklist">${checkList()}</div></fieldset>
+      <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend><div id="checklist">${checkList(oilSection())}</div></fieldset>
       <div class="value-row"><span>Masa składników bazowych</span><strong id="actual-mass">${fmt.mixingQuantity(batchMass()/1000)}</strong></div>
-      ${oilSection()}
       <div id="date-rows">${dateSection()}</div>`,editing ? 'Zapisz' : 'Zatwierdź partię',editing),
     change(element) {
       if (element.id === 'oil') document.getElementById('oil-volume').hidden = !element.value;
+      if (!editing && ['oil','oil-litres'].includes(element.id)) document.getElementById('oil-checked').checked = false;
 
       if (element.dataset.check !== undefined) {
         if (element.checked) selected.add(Number(element.dataset.check));
@@ -471,10 +504,11 @@ export function mixForm(ctx, name, id, origin) {
       const oil = readOil();
       const mass = batchMass() + (oil?.grams ?? 0);
       if (original?.remaining > mass) throw new FieldError('','Pozostałość przekracza masę mieszanki. Skoryguj ją w zakończeniu partii.');
-      if (!editing && selected.size < items.length && !await ctx.confirm('Zatwierdzić partię?',
+      const incomplete = selected.size < items.length || (oil && !document.getElementById('oil-checked')?.checked);
+      if (!editing && incomplete && !await ctx.confirm('Zatwierdzić partię?',
         'Nie wszystkie składniki są odhaczone. Zatwierdzić?', 'Zatwierdź')) return;
       const mixItems = items.map(({ingredientId,name,unit,density,grams,price}) => ({ingredientId,name,unit,density,grams,price}));
-      if (oil) mixItems.push(oil);
+      if (oil) mixItems.splice(oilPosition(),0,oil);
       const saved = await ctx.commit(data => putBatch(data,original,{
         recipeId:original?.recipeId ?? recipe.id, recipeName:original?.recipeName ?? recipe.name,
         date:mixed,start:begins,end:original?.end ?? null,remaining:original?.remaining ?? null,mass,items:mixItems
@@ -495,7 +529,7 @@ export function mixForm(ctx, name, id, origin) {
           target = grams;
           editedIndex = null;
           scale();
-          renderMix();
+          renderMix(Boolean(configuredOil));
           document.querySelector('[data-action="' + action + '"]').focus({preventScroll:true});
           ctx.dirty();
         }
@@ -504,7 +538,7 @@ export function mixForm(ctx, name, id, origin) {
         const nextRecipe = get(ctx,'recipes',action.slice(7));
         if (recipe.id !== nextRecipe.id) {
           recipe = nextRecipe;
-          editedIndex = null; scale(); renderMix(); refreshOilOptions(); ctx.dirty();
+          editedIndex = null; scale(); renderMix(true); ctx.dirty();
         }
       }
       if (action.startsWith('quantity:')) {
