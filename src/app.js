@@ -7,7 +7,7 @@ import * as forms from './forms.js';
 import {FieldError, html, showFormError} from '../ui/components.js';
 import {t} from '../ui/texts.js';
 
-const version = '1.6.3';
+const version = '1.6.4';
 
 const app = document.getElementById('app');
 const snackbar = document.getElementById('snackbar');
@@ -353,8 +353,20 @@ async function initialize() {
   }
   navigator.storage?.persist?.().catch(() => {});
   if ('serviceWorker' in navigator) {
+    // Po włączeniu nowej wersji strona przeładowuje się sama, chyba że w formularzu są niezapisane zmiany.
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      if (dirty) { notify(t.newVersion, undefined, 15000); return; }
+      reloading = true;
+      location.reload();
+    });
     navigator.serviceWorker.register('./sw.js').then(registration => {
       registration.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) registration.update().catch(() => {});
+      });
       function announceWaiting() {
         if (registration.waiting && navigator.serviceWorker.controller) {
           notify(t.newVersion, undefined, 15000);

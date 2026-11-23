@@ -1,4 +1,4 @@
-const VERSION = '1.6.3';
+const VERSION = '1.6.4';
 const CACHE_PREFIX = 'kurnik:' + self.registration.scope + ':';
 const CACHE = CACHE_PREFIX + VERSION;
 const SHELL = [
@@ -11,7 +11,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path,{cache:'reload'})))));
+  // Nowa wersja włącza się od razu, bez czekania na zamknięcie wszystkich okien Kurnika.
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path,{cache:'reload'}))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
