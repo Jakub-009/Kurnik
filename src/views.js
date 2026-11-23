@@ -1,4 +1,4 @@
-import { cohortAge, cohortEvents, cohortOrigin, cohortState, daysBetween, flockEventKind, mixtureCost, recipeComposition, savings} from './calc/index.js';
+import {batchBaseMass, batchOil, cohortAge, cohortEvents, cohortOrigin, cohortState, daysBetween, flockEventKind, isMixingOil, mixtureCost, recipeComposition, savings} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, latestFirst, showAmount} from './model.js';
 import {banner, button, details, empty, fab, forecast, html, link, row, warning} from '../ui/components.js';
@@ -69,6 +69,15 @@ export function start(ctx) {
     </div>`};
 }
 
+function oilVolume(item) {
+  return fmt.number(item.millilitres / 1000,3) + ' l';
+}
+
+function batchLabel(batch) {
+  const oil = batchOil(batch);
+  return fmt.mass(batchBaseMass(batch)) + (oil ? ' + ' + oilVolume(oil) + ' oleju' : '');
+}
+
 export function feed(ctx) {
   const {derived, today} = ctx;
   return {title:'Pasza', floating:fab('Mieszam','mix','plus'), body:`<div class="stack">
@@ -83,7 +92,7 @@ export function feed(ctx) {
     <section class="stack tight"><h2>Partie</h2>${derived.batches.length ? '<div class="list">' + derived.batches.map(batch =>
       row({name:batch.recipeName, symbol:'feed', sub:fmt.listDate(batch.date, today) + ' · ' +
         (batch.end && batch.end <= today ? 'Zakończona' : batch.start > today ? 'Zaplanowana' : 'Otwarta'),
-        value:fmt.mass(batch.mass), route:'batch/' + batch.id})).join('') + '</div>' : empty('Nie zapisano jeszcze żadnej partii.')}</section>
+        value:batchLabel(batch), route:'batch/' + batch.id})).join('') + '</div>' : empty('Nie zapisano jeszcze żadnej partii.')}</section>
     </div>`};
 }
 
@@ -116,25 +125,28 @@ export function recipeView(ctx, id) {
   const recipe = find(ctx.data, 'recipes', id);
   if (!recipe) return missing('feed');
   const composition = recipeComposition(recipe, ctx.derived.ingredients);
+  const hasBase = composition.items.length > 0;
   const precise = (value, unit) => fmt.number(value, 2) + ' ' + unit;
   return {title:recipe.name, parent:'feed', body:`<div class="stack">
-    <section class="card stack tight"><h2>Receptura</h2><p class="display">${precise(composition.mass / 1000, 'kg')}</p>
+    <section class="card stack tight"><h2>Receptura</h2>${hasBase ? '<p class="display">' + precise(composition.mass / 1000,'kg') + '</p>'
+        : '<p>Dodaj składniki bazowe do receptury.</p>'}
       ${recipe.current ? '<div><span class="tag">Aktualna</span></div>' : ''}
       ${recipe.notes ? '<p class="notes">' + html(recipe.notes) + '</p>' : ''}</section>
-    <section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${composition.items.map(item =>
+    ${hasBase ? `<section class="stack tight"><h2>Skład i proporcje</h2><div class="list">${composition.items.map(item =>
       row({name:item.name, symbol:'stock', sub:fmt.percent(item.share) + ' · ' +
         precise(item.amount / 1000 * 100000 / composition.mass, item.unit) + ' na 100 kg',
-        value:precise(item.amount / 1000, item.unit)})).join('')}</div></section>
+        value:precise(item.amount / 1000, item.unit)})).join('')}</div></section>` : ''}
     ${costRows(mixtureCost(composition.items), ctx.derived.settings)}
     <div class="actions">${link('Edytuj', 'recipe-form/' + id, 'tonal', 'edit')}
       ${recipe.current ? '' : button('Ustaw jako aktualną', 'current', 'tonal', 'check')}
-      ${link('Mieszam', 'mix/' + id, '', 'plus')}</div></div>`,
+      ${hasBase ? link('Mieszam','mix/' + id,'','plus') : ''}</div></div>`,
     action: (action) => { if (action === 'current') ctx.commit(data => ctx.setCurrent(data, id)); }};
 }
 
 export function batchView(ctx, id) {
   const batch = find(ctx.data, 'batches', id);
   if (!batch) return missing('feed');
+  const oil = batchOil(batch);
   const result = batchStats(batch, ctx.data, ctx.derived, ctx.today);
   const estimated = text => !result.finished ? '≈ ' + text + ' <small>prognoza</small>' : text;
   const metrics = [];
@@ -144,13 +156,15 @@ export function batchView(ctx, id) {
     if (result.birds > 0) metrics.push(['Na ptaka dziennie', estimated(fmt.number(result.daily / result.birds, 1) + ' g')]);
   }
   return {title:'Partia', subtitle:batch.recipeName, parent:'feed', body:`<div class="stack">
-    <section class="card stack tight"><p class="display">${fmt.mass(batch.mass)}</p>
+    <section class="card stack tight"><p class="display">${batchLabel(batch)}</p>
       ${details([['Zmieszano', fmt.fullDate(batch.date)], ['Początek podawania', fmt.fullDate(batch.start)],
         ...(batch.end ? [['Koniec podawania', fmt.fullDate(batch.end)]] : []),
         ...(result.remaining != null ? [['Pozostałość', estimated(fmt.mass(result.remaining))]] : [])])}</section>
     ${metrics.length ? '<section class="card stack tight"><h2>Wyniki</h2>' + details(metrics) + '</section>' : ''}
-    <section class="stack tight"><h2>Skład</h2><div class="list">${batch.items.map(item =>
+    <section class="stack tight"><h2>${oil ? 'Składniki bazowe' : 'Skład'}</h2><div class="list">${batch.items.filter(item => !item.oil).map(item =>
       row({name:item.name, symbol:'stock', value:fmt.quantity(showAmount(item.grams,item),item.unit,true)})).join('')}</div></section>
+    ${oil ? '<section class="stack tight"><h2>Olej do mieszania</h2><div class="list">' +
+      row({name:oil.name,symbol:'stock',value:oilVolume(oil)}) + '</div></section>' : ''}
     ${costRows(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed, daily:result.daily, estimated:!result.finished})}
     <div class="actions">${link(result.finished ? 'Edytuj zakończenie' : 'Zakończ partię', 'finish/' + id + '/batch', 'tonal')}
       ${link('Edytuj partię', 'batch-form/' + id, '', 'edit')}</div></div>`};
@@ -171,9 +185,9 @@ export function ingredientView(ctx, id) {
   const {ingredient, grams, known, outlook} = item;
   const events = live(ctx.data.ingredientEvents).filter(row => row.ingredientId === id).sort(latestFirst);
   return {title:ingredient.name, parent:'stock', body:`<div class="stack"><section class="card stack tight">
-    <h2>Stan wyliczony</h2><p class="display"> ${known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
+    <h2>Stan wyliczony</h2>${isMixingOil(ingredient) ? '<p class="muted">Olej do mieszania</p>' : ''}<p class="display"> ${known ? fmt.quantity(showAmount(grams,ingredient),ingredient.unit) : 'Stan do wpisania'}</p>
      ${known && grams < 0 ? warning('Sprawdź stan') : ''}
-    ${known ? forecast(outlook,ctx.derived.settings.threshold,ctx.today) : ''}
+    ${known && !isMixingOil(ingredient) ? forecast(outlook,ctx.derived.settings.threshold,ctx.today) : ''}
     ${ingredient.price ? '<p><small>Ostatnia cena</small> ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
     </section><div class="actions">${link('Dodaj','movement/add/' + id,'tonal','plus')}
       ${link('Korekta stanu','movement/correction/' + id,'tonal')}

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {averageFlock,batchResult,cohortAge,cohortState,dailyAverage,flockCount,ingredientMass,mixtureCost,recipeComposition,
+import {averageFlock,batchBaseMass,batchOil,batchResult,cohortAge,cohortState,dailyAverage,flockCount,ingredientMass,isMixingOil,mixtureCost,recipeComposition,
   remainingMix,savings,scaleRecipe,stock,supplyForecast,validCohortHistory} from '../src/calc/index.js';
 import {decodeBackup,encodeBackup} from '../src/backup.js';
 import {record} from '../src/db.js';
@@ -12,7 +12,7 @@ const today = '2026-11-22';
 const amounts = [17000,13000,10000,5000,3250,1250,1000];
 const names = ['Pszenica','Kukurydza','Śruta sojowa','Groch','Kreda','Dolmix DN','Olej'];
 const fixture = () => {
-  const ingredients = names.map((name,i) => record({name,unit:i === 6 ? 'l' : 'kg',density:i === 6 ? .92 : null,price:null}));
+  const ingredients = names.map((name,i) => record({name,unit:i === 6 ? 'l' : 'kg',density:i === 6 ? .92 : null,price:null,oil:false}));
   const recipe = record({name:'Podstawowa',items:ingredients.map((row,i) => ({ingredientId:row.id,amount:amounts[i]})),
     current:true,notes:''});
   const data = {ingredients,recipes:[recipe],batches:[],ingredientEvents:[],cohorts:[],cohortChanges:[],
@@ -229,4 +229,45 @@ test('zdarzenia zapisane w tym samym momencie zachowują kolejność wpisów', (
     record({...fields,type:'loss',count:2,order:1})
   ];
   assert.equal(cohortState(cohort,events,today).count,9);
+});
+
+test('olej nie zmienia proporcji bazowych ani masy wybranej do przeliczenia', () => {
+  const {data,ingredients,recipe} = fixture();
+  const oil = ingredients[6];
+  delete oil.oil;
+  assert.equal(isMixingOil(oil),true);
+  const composition = recipeComposition(recipe,ingredients);
+  assert.equal(composition.mass,49500);
+  assert.equal(composition.items.length,6);
+  near(composition.items.reduce((sum,item) => sum + item.share,0),1);
+  for (const grams of [50000,100000]) {
+    const scaled = scaleRecipe(composition,grams);
+    assert.equal(scaled.reduce((sum,item) => sum + item.grams,0),grams);
+    assert.ok(!scaled.some(item => item.ingredientId === oil.id));
+  }
+  assert.equal(derive(data,today).stocks.find(row => row.ingredient.id === oil.id).outlook,null);
+});
+
+test('partia zapisuje litry oleju, odejmuje zapas i liczy jego koszt obok masy bazowej', () => {
+  const {data,ingredients,recipe} = fixture();
+  const oil = ingredients[6];
+  oil.oil = true;
+  oil.name = 'Olej sojowy';
+  for (const ingredient of ingredients) {
+    ingredient.price = ingredient.oil ? {cents:400,grams:920} : {cents:100,grams:1000};
+  }
+  data.ingredientEvents.push(record({ingredientId:oil.id,type:'purchase',date:today,grams:9200,
+    measured:null,price:oil.price,priceMode:'per-litre',batchId:null,notes:''}));
+  const base = scaleRecipe(recipeComposition(recipe,ingredients),50000);
+  const oilItem = {ingredientId:oil.id,name:oil.name,unit:'l',density:.92,oil:true,millilitres:1250,grams:1150,price:oil.price};
+  const batch = putBatch(data,null,{recipeId:recipe.id,recipeName:recipe.name,date:today,start:today,
+    end:null,remaining:null,mass:51150,items:[...base,oilItem]});
+  assert.equal(batchBaseMass(batch),50000);
+  assert.equal(batchOil(batch).millilitres,1250);
+  assert.equal(stock(data.ingredientEvents,oil.id),8050);
+  near(mixtureCost(batch.items).cents,5500);
+  const restored = decodeBackup(encodeBackup(data,today));
+  assert.deepEqual(restored.batches[0],batch);
+  batch.items.at(-1).millilitres = 1000;
+  assert.throws(() => decodeBackup(encodeBackup(data,today)),/niespójne/);
 });

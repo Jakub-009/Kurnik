@@ -7,12 +7,12 @@ export const record = fields => ({
 
 function initialData() {
   const ingredients = ['Pszenica', 'Kukurydza', 'Śruta sojowa', 'Groch', 'Kreda', 'Dolmix DN', 'Olej']
-    .map((name, i) => record({name, unit: i === 6 ? 'l' : 'kg', density: i === 6 ? 0.92 : null, price: null}));
-  const amounts = [17000, 13000, 10000, 5000, 3250, 1250, 1000];
+    .map((name, i) => record({name, unit: i === 6 ? 'l' : 'kg', density: i === 6 ? 0.92 : null, price: null, oil: i === 6}));
+  const amounts = [17000, 13000, 10000, 5000, 3250, 1250];
   return {
     ingredients, ingredientEvents: [], batches: [], cohorts: [], cohortChanges: [],
     recipes: [record({name: 'Mieszanka podstawowa', current: true, notes: '',
-      items: ingredients.map(({id}, i) => ({ingredientId: id, amount: amounts[i]}))})],
+      items: ingredients.slice(0, amounts.length).map(({id}, i) => ({ingredientId: id, amount: amounts[i]}))})],
     settings: [record({revision: 0, threshold: 30, defaultDaily: 3700, readyPrice: null, lastExport: null})]
   };
 }

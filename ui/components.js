@@ -69,27 +69,11 @@ export const dateField = (name, label, value, min = '1900-01-01', max = '9999-12
 export const changeRow = (title, value, action) =>
   `<div class="value-row"><span class="grow">${html(title)} <strong>${html(value)}</strong></span>${button('Zmień', action)}</div>`;
 
-export function keypadKeys(name, decimal = true) {
-  const keys = ['1','2','3','4','5','6','7','8','9',',','0','backspace'];
-  return `<div class="keypad" data-keypad="${name}" role="group" aria-label="Klawiatura numeryczna">${keys.map(key =>
-    `<button type="button" data-key="${key}"${key === ',' && !decimal ? ' disabled' : ''}${key === 'backspace' ? ' aria-label="Usuń ostatni znak"' : ''}>${key === 'backspace' ? '⌫' : key}</button>`).join('')}</div>`;
-}
-
-export function keypad(name, label, value = '', unit = '', decimal = true) {
+export function numberField(name, label, value = '', unit = '', mode = 'decimal') {
   const input = `<div class="number-field"><input autocomplete="off" id="${name}"
-    name="${name}" type="text" inputmode="none" value="${html(value)}" aria-describedby="${name}-error">
+    name="${name}" type="text" inputmode="${mode}" maxlength="18" value="${html(value)}" aria-describedby="${name}-error">
     <span class="number-unit" data-unit-for="${name}">${html(unit)}</span></div>`;
-  return `<div class="stack tight">${fieldWrap(name,label,input)}${keypadKeys(name,decimal)}</div>`;
-}
-
-export function handleKeypad(button) {
-  const input = document.getElementById(button.closest('[data-keypad]').dataset.keypad);
-  const key = button.dataset.key;
-  const raw = input.value;
-  if (key === ',' && /[.,]/.test(raw)) return;
-  if (key !== 'backspace' && raw.length >= 18) return;
-  input.value = key === 'backspace' ? raw.slice(0, -1) : raw + key;
-  input.dispatchEvent(new Event('input', {bubbles:true}));
+  return fieldWrap(name,label,input);
 }
 
 export const form = (content, submit = 'Zapisz', deletable = false) =>

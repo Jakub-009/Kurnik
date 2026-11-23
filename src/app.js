@@ -4,7 +4,7 @@ import {loadData, openDatabase, refreshPrices, saveData, stores} from './db.js';
 import {derive, setCurrent} from './model.js';
 import * as views from './views.js';
 import * as forms from './forms.js';
-import {FieldError, handleKeypad, html, showFormError} from '../ui/components.js';
+import {FieldError, html, showFormError} from '../ui/components.js';
 
 const app = document.getElementById('app');
 const snackbar = document.getElementById('snackbar');
@@ -247,7 +247,6 @@ app.addEventListener('click', event => {
   }
   const target = event.target.closest('button');
   if (!target || dialog.open || busy) return;
-  if (target.dataset.key) { handleKeypad(target); return; }
   const action = target.dataset.action;
   if (!action) return;
   if (action === 'back') {
@@ -289,7 +288,6 @@ function inputChanged(event) {
     catch (error) { report(error); }
   }
 }
-app.addEventListener('focusin', event => screen?.focus?.(event.target));
 app.addEventListener('input', inputChanged);
 app.addEventListener('change', inputChanged);
 undo.addEventListener('click', () => run(async () => { await undoAction?.(); }));

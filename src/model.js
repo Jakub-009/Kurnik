@@ -1,5 +1,5 @@
 import {live, record} from './db.js';
-import {averageFlock, batchResult, dailyAverage, daysBetween, flockCount,
+import {averageFlock, batchBaseMass, batchResult, dailyAverage, daysBetween, flockCount,
   mixtureCost, recipeComposition, remainingMix, stock, supplyForecast} from './calc/index.js';
 
 export const latestFirst = (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
@@ -71,14 +71,16 @@ export function derive(data, today) {
     return {batch, elapsed, used, remaining};
   });
   const active = openStatus.find(row => row.remaining > 0) ?? openStatus.at(-1);
-  const mixed = openStatus.reduce((sum, row) => sum + row.remaining, 0);
+  const baseShare = batch => batchBaseMass(batch) / batch.mass;
+  const baseDaily = dailyAverage(batches,settings.defaultDaily,today,batch => batchResult(batch).consumed * baseShare(batch));
+  const mixed = openStatus.reduce((sum,row) => sum + row.remaining * baseShare(row.batch),0);
   const received = new Set(live(data.ingredientEvents)
     .filter(row => ['addition','purchase','correction'].includes(row.type)).map(row => row.ingredientId));
   const stocks = ingredients.map(ingredient => {
     const grams = stock(data.ingredientEvents,ingredient.id);
     const known = received.has(ingredient.id);
     const share = composition?.items.find(item => item.ingredientId === ingredient.id)?.share;
-    const outlook = known ? supplyForecast(grams,share,daily,mixed,today) : null;
+    const outlook = known ? supplyForecast(grams,share,baseDaily,mixed,today) : null;
     return {ingredient,grams,known,outlook};
   }).sort((a,b) => (a.outlook?.days ?? Infinity) - (b.outlook?.days ?? Infinity) ||
     Number(b.known) - Number(a.known) || a.ingredient.name.localeCompare(b.ingredient.name,'pl'));

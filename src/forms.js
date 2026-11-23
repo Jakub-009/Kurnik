@@ -1,9 +1,9 @@
-import {addDays, batchResult, cohortEvents, cohortOrigin, cohortState, flockEventKind, ingredientMass, recipeComposition, scaleRecipe, stock, validCohortHistory} from './calc/index.js';
+import {addDays, batchOil, batchResult, cohortEvents, cohortOrigin, cohortState, flockEventKind, ingredientMass, isMixingOil, recipeBaseItems, recipeComposition, scaleRecipe, stock, validCohortHistory} from './calc/index.js';
 import {live,record} from './db.js';
 import {find, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
 import {missing} from './views.js';
 import {button, changeRow, dateField, details, empty, field, FieldError, form, html, iconButton,
-  keypad, keypadKeys, link, readDate, readName, readNumber, select, textarea} from '../ui/components.js';
+  link, numberField, readDate, readName, readNumber, select, textarea} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 
@@ -28,7 +28,17 @@ function ingredientFields(prefix, item) {
   return `${field(prefix + 'name','Nazwa',item?.name,{length:80})}
     ${select(prefix + 'unit','Jednostka',[['kg','kg'],['l','l']],item?.unit ?? 'kg')}
     <div id="${prefix}density-wrap"${item?.unit !== 'l' ? ' hidden' : ''}>
-      ${field(prefix + 'density','Gęstość (kg/l)',asInput(item?.density),{mode:'decimal'})}</div>`;
+      ${field(prefix + 'density','Gęstość (kg/l)',asInput(item?.density),{mode:'decimal'})}</div>
+    <div id="${prefix}role-wrap"${item?.unit !== 'l' ? ' hidden' : ''}>
+      ${select(prefix + 'role','Zastosowanie',[['base','Składnik receptury'],['oil','Olej do mieszania']],
+        item && isMixingOil(item) ? 'oil' : 'base')}</div>`;
+}
+
+function updateIngredientFields(prefix, target) {
+  if (target.id !== prefix + 'unit') return;
+  const hidden = target.value !== 'l';
+  document.getElementById(prefix + 'density-wrap').hidden = hidden;
+  document.getElementById(prefix + 'role-wrap').hidden = hidden;
 }
 
 function ingredientValues(prefix, ingredients, id, lockedUnit) {
@@ -41,31 +51,40 @@ function ingredientValues(prefix, ingredients, id, lockedUnit) {
     throw new FieldError(prefix + 'unit','Jednostka jest powiązana z istniejącymi wpisami.');
   }
   const density = unit === 'l' ? readNumber(value(prefix + 'density'),prefix + 'density',{min:.001,max:100}) : null;
-  return {name,unit,density};
+  return {name,unit,density,oil:unit === 'l' && value(prefix + 'role') === 'oil'};
 }
 
 export function ingredientForm(ctx, id) {
+  const addingOil = id === 'oil';
+  if (addingOil) id = undefined;
   const old = get(ctx,'ingredients',id);
   if (id && !old) return missing('stock');
   const parent = old ? 'ingredient/' + id : 'stock';
   const referenced = old && (ctx.data.recipes.some(row => row.items.some(item => item.ingredientId === id)) ||
     ctx.data.ingredientEvents.some(row => row.ingredientId === id));
   return {
-    title:old ? 'Edytuj składnik' : 'Dodaj składnik', parent, form:true,
-    body:form(`${ingredientFields('',old)}
+    title:old ? 'Edytuj składnik' : addingOil ? 'Dodaj olej' : 'Dodaj składnik', parent, form:true,
+    body:form(`${ingredientFields('',old ?? (addingOil ? {unit:'l',oil:true,density:.92} : null))}
       ${referenced ? '<p class="muted">Jednostka jest powiązana z zapisanymi wpisami.</p>' : ''}`, 'Zapisz', Boolean(old)),
     change(target) {
-      if (target.id === 'unit') document.getElementById('density-wrap').hidden = target.value !== 'l';
+      updateIngredientFields('',target);
     },
     submit() {
-      const {name,unit,density} = ingredientValues('',ctx.derived.ingredients,id,referenced ? old.unit : null);
-      if (old && density !== old.density) {
-        for (const recipe of ctx.derived.recipes) {
-          const item = recipe.items.find(row => row.ingredientId === id);
-          if (item) physicalMass(item.amount / 1000, {unit,density}, 'density');
+      const fields = ingredientValues('',ctx.derived.ingredients,id,referenced ? old.unit : null);
+      if (old && fields.oil && !isMixingOil(old)) {
+        const updated = ctx.derived.ingredients.map(ingredient => ingredient.id === id ? {...old,...fields} : ingredient);
+        if (ctx.derived.recipes.some(recipe => recipe.items.some(item => item.ingredientId === id) &&
+          !recipeBaseItems(recipe,updated).length)) {
+          throw new FieldError('role','Ta zmiana pozostawiłaby recepturę bez składników bazowych.');
         }
       }
-      return ctx.commit(data => put(data,'ingredients',old,{name,unit,density,price:old?.price ?? null}), parent);
+      if (old && !fields.oil && fields.density !== old.density) {
+        for (const recipe of ctx.derived.recipes) {
+          const item = recipe.items.find(row => row.ingredientId === id);
+          if (item) physicalMass(item.amount / 1000, fields, 'density');
+        }
+      }
+      return ctx.commit(data => put(data,'ingredients',old,{...fields,price:old?.price ?? null}), parent);
     },
     action(action) {
       if (action !== 'delete') return;
@@ -84,7 +103,7 @@ export function recipeForm(ctx, id) {
   const old = get(ctx,'recipes',id);
   if (id && !old) return missing('feed');
   const parent = old ? 'recipe/' + id : 'feed';
-  const ingredients = ctx.derived.ingredients.slice().sort((a,b) => a.name.localeCompare(b.name,'pl'));
+  const ingredients = ctx.derived.ingredients.filter(row => !isMixingOil(row)).sort((a,b) => a.name.localeCompare(b.name,'pl'));
   const drafted = [];
   const optionLabel = row => row.name + ' (' + row.unit + ')';
   const options = () => [['','Wybierz'],...ingredients.map(row => [row.id,optionLabel(row)])];
@@ -92,28 +111,21 @@ export function recipeForm(ctx, id) {
   const readLine = (ingredientId = '', amount) => {
     const index = next++;
     return `<div class="recipe-line" data-recipe-line="${index}">${select('ingredient-' + index,'Składnik',options(),ingredientId)}
-      ${field('amount-' + index,'Ilość',asInput(amount),{mode:'none',length:17})}
-      ${iconButton('Usuń pozycję','del','drop:' + index)}<div class="recipe-keypad" hidden>${keypadKeys('amount-' + index)}</div></div>`;
+      ${field('amount-' + index,'Ilość',asInput(amount),{mode:'decimal',length:17})}
+      ${iconButton('Usuń pozycję','del','drop:' + index)}</div>`;
   };
-  const items = old ? old.items.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
+  const base = old ? recipeBaseItems(old,ctx.derived.ingredients) : [];
+  const items = base.length ? base.map(item => readLine(item.ingredientId,item.amount / 1000)).join('') : readLine();
   return {title:old ? 'Edytuj recepturę' : 'Dodaj recepturę',parent,form:true,
     body:form(`${field('name','Nazwa',old?.name,{length:80})}<fieldset class="stack tight"><legend>Składniki</legend>
       <div class="stack tight" id="recipe-lines">${items}</div><div class="actions">
       ${button('Dodaj pozycję','add-line','tonal','plus')}${button('Utwórz składnik','new-ingredient')}</div></fieldset>
-      <fieldset class="card stack" id="new-ingredient" hidden><legend>Nowy składnik</legend>
-        ${ingredientFields('new-',null)}<div class="actions">${button('Dodaj do receptury','use-ingredient','tonal')}
+      <p id="oil-draft" class="muted" role="status" hidden></p><fieldset class="card stack" id="new-ingredient" hidden><legend>Nowy składnik</legend>
+        ${ingredientFields('new-',null)}<div class="actions">${button('Dodaj składnik','use-ingredient','tonal')}
         ${button('Anuluj','cancel-ingredient')}</div></fieldset>
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`, 'Zapisz', Boolean(old)),
-    focus(target) {
-      const row = target.closest('[data-recipe-line]');
-      const keyboard = row?.querySelector('.recipe-keypad');
-      if (target.closest('.recipe-keypad')) return;
-      document.querySelectorAll('.recipe-keypad').forEach(element => {
-        element.hidden = element !== keyboard || !target.id.startsWith('amount-');
-      });
-    },
     change(target) {
-      if (target.id === 'new-unit') document.getElementById('new-density-wrap').hidden = target.value !== 'l';
+      updateIngredientFields('new-',target);
     },
     submit() {
       const name = readName(value('name'));
@@ -136,7 +148,7 @@ export function recipeForm(ctx, id) {
       return ctx.commit(data => {
         const used = new Set(written.map(item => item.ingredientId));
         for (const ingredient of drafted) {
-          if (used.has(ingredient.id)) put(data,'ingredients',null,ingredient);
+          if (ingredient.oil || used.has(ingredient.id)) put(data,'ingredients',null,ingredient);
         }
         put(data,'recipes',old,{name,items:written,notes:text('notes'),current:old?.current ?? !live(data.recipes).length});
       },parent);
@@ -149,16 +161,22 @@ export function recipeForm(ctx, id) {
       }
       if (action === 'cancel-ingredient' || action === 'use-ingredient') {
         if (action === 'use-ingredient') {
-          const ingredient = {id:crypto.randomUUID(),...ingredientValues('new-',ingredients),price:null};
+          const ingredient = {id:crypto.randomUUID(),...ingredientValues('new-',[...ctx.derived.ingredients,...drafted]),price:null};
           drafted.push(ingredient);
-          ingredients.push(ingredient);
-          const selectors = [...document.querySelectorAll('#recipe-lines select')];
-          const blank = selectors.find(item => !item.value);
-          for (const item of selectors) item.add(new Option(optionLabel(ingredient),ingredient.id));
-          if (blank) blank.value = ingredient.id;
-          else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
-          const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
-          document.getElementById('amount-' + index).focus();
+          if (ingredient.oil) {
+            const notice = document.getElementById('oil-draft');
+            notice.hidden = false;
+            notice.textContent = 'Olej będzie dostępny na ekranie „Mieszam” po zapisaniu receptury.';
+          } else {
+            ingredients.push(ingredient);
+            const selectors = [...document.querySelectorAll('#recipe-lines select')];
+            const blank = selectors.find(item => !item.value);
+            for (const item of selectors) item.add(new Option(optionLabel(ingredient),ingredient.id));
+            if (blank) blank.value = ingredient.id;
+            else document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine(ingredient.id));
+            const index = blank ? blank.id.slice('ingredient-'.length) : next - 1;
+            document.getElementById('amount-' + index).focus();
+          }
           ctx.dirty();
         }
         editor.hidden = true;
@@ -166,6 +184,8 @@ export function recipeForm(ctx, id) {
         document.getElementById('new-unit').value = 'kg';
         document.getElementById('new-density').value = '';
         document.getElementById('new-density-wrap').hidden = true;
+        document.getElementById('new-role').value = 'base';
+        document.getElementById('new-role-wrap').hidden = true;
       }
       if (action === 'add-line') {
         document.getElementById('recipe-lines').insertAdjacentHTML('beforeend',readLine());
@@ -232,7 +252,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
       ${changeRow('Data',fmt.fullDate(date),'date')}
       <div id="date-wrap" hidden>${dateInput(ctx,'date','Data wpisu',date)}</div>
       ${correction ? '<p>Stan wyliczony <strong id="calculated-stock">' + signed(currentStock()).replace(/^\+/,'') + '</strong></p>' : ''}
-      ${keypad('quantity',correction ? 'Jest faktycznie' : 'Ilość',asInput(initialAmount),ingredient.unit)}
+      ${numberField('quantity',correction ? 'Jest faktycznie' : 'Ilość',asInput(initialAmount),ingredient.unit)}
       ${correction ? '<p id="difference" role="status">' + (old ? 'Różnica ' + signed(old.grams) : '') + '</p>' : ''}
       ${add ? select('addition-kind','Skąd pochodzi składnik?',[['addition','Własny lub otrzymany'],['purchase','Zakup']],'addition') : ''}
       ${canPrice ? `<div id="purchase-fields"${purchase ? '' : ' hidden'}>${priceBlock(ingredient,defaultMode)}</div>` : ''}
@@ -296,20 +316,26 @@ export function mixForm(ctx, name, id, origin) {
   const editing = name === 'batch-form';
   const original = editing ? get(ctx,'batches',id) : null;
   if (editing && !original) return missing('feed');
-  const recipeList = ctx.derived.recipes;
-  let recipe = (editing ? null : get(ctx,'recipes',id)) ?? ctx.derived.current;
+  const ingredients = ctx.derived.ingredients;
+  const recipeList = ctx.derived.recipes.filter(item => recipeBaseItems(item,ingredients).length);
+  let recipe = recipeList.find(item => item.id === id) ?? recipeList.find(item => item.current) ?? recipeList[0];
   const parent = editing ? 'batch/' + id : (origin === 'start' ? 'start' : get(ctx,'recipes',id) ? 'recipe/' + id : 'feed');
   if (!editing && !recipe) return {title:'Mieszam',parent,
-    body:empty('Najpierw dodaj recepturę.',link('Dodaj recepturę','recipe-form','tonal'))};
+    body:empty('Najpierw przygotuj recepturę ze składnikami bazowymi.',link('Dodaj recepturę','recipe-form','tonal'))};
   let target = 50000;
   let date = original?.date ?? ctx.today;
   let start = original?.start ?? ctx.today;
-  let items = original ? structuredClone(original.items) : [];
+  const originalOil = original ? batchOil(original) : undefined;
+  let items = original ? structuredClone(original.items.filter(item => !item.oil)) : [];
+  const oils = ingredients.filter(isMixingOil).sort((a,b) => a.name.localeCompare(b.name,'pl'));
+  if (originalOil && !oils.some(oil => oil.id === originalOil.ingredientId)) {
+    oils.push({...originalOil,id:originalOil.ingredientId});
+  }
   let selected = new Set();
   let editedIndex = null;
 
   function scale() {
-    items = scaleRecipe(recipeComposition(recipe,ctx.derived.ingredients),target);
+    items = scaleRecipe(recipeComposition(recipe,ingredients),target);
     selected = new Set();
   }
   if (!editing) scale();
@@ -326,7 +352,7 @@ export function mixForm(ctx, name, id, origin) {
 
   function itemEditor(index) {
     const item = items[index];
-    return `<div class="card stack" id="quantity-edit">${keypad('adjust','Ilość · ' + item.name,
+    return `<div class="card stack" id="quantity-edit">${numberField('adjust','Ilość · ' + item.name,
       asInput(showAmount(item.grams,item)),item.unit)}
       <div class="actions">${button('Zastosuj ilość','apply-quantity','tonal','check')}${button('Anuluj','cancel-quantity')}</div></div>`;
   }
@@ -337,6 +363,45 @@ export function mixForm(ctx, name, id, origin) {
         `<label for="check-${index}"><input id="check-${index}" type="checkbox" data-check="${index}" ${selected.has(index) ? 'checked' : ''}><span>${html(item.name)}</span></label>`}
       <button class="button" type="button" data-action="quantity:${index}" aria-label="Zmień ilość: ${html(item.name)}, ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}">
         ${fmt.mixingQuantity(showAmount(item.grams,item),item.unit)}${icon('edit')}</button></div>${editedIndex === index ? itemEditor(index) : ''}`).join('');
+  }
+
+  function oilSection() {
+    const oilOptions = oils.filter(oil => !items.some(item => item.ingredientId === oil.id));
+    const oilSelect = select('oil','Olej (opcjonalnie)',[['','Bez oleju'],...oilOptions.map(oil => [oil.id,oil.name])],
+      originalOil?.ingredientId ?? '');
+    return `<div id="mix-oil" class="stack tight">
+      ${oilOptions.length ? oilSelect : '<div>' + link('Dodaj olej w magazynie','ingredient-form/oil') + '</div>'}
+      <div id="oil-volume"${originalOil ? '' : ' hidden'}>
+        ${numberField('oil-litres','Ilość oleju',asInput(originalOil ? originalOil.millilitres / 1000 : null),'l')}
+      </div></div>`;
+  }
+
+  function refreshOilOptions() {
+    const selectOil = document.getElementById('oil');
+    const selectedOil = selectOil?.value;
+    const litres = value('oil-litres');
+    const oilBlock = document.getElementById('mix-oil');
+    oilBlock.outerHTML = oilSection();
+    const newSelect = document.getElementById('oil');
+    if (newSelect && [...newSelect.options].some(option => option.value === selectedOil)) {
+      newSelect.value = selectedOil;
+      document.getElementById('oil-litres').value = litres;
+    }
+    document.getElementById('oil-volume').hidden = !newSelect?.value;
+  }
+
+  function readOil() {
+    const selectedOil = document.getElementById('oil')?.value;
+    if (!selectedOil) return null;
+    const litres = readNumber(value('oil-litres'),'oil-litres',amountOptions);
+    const millilitres = Math.round(litres * 1000);
+    if (originalOil?.ingredientId === selectedOil) {
+      return {...originalOil,millilitres,grams:physicalMass(litres,originalOil,'oil-litres')};
+    }
+    const ingredient = oils.find(oil => oil.id === selectedOil);
+    const {name,unit,density,price} = ingredient;
+    return {ingredientId:selectedOil,name,unit,density,price,grams:physicalMass(litres,ingredient,'oil-litres'),
+      oil:true,millilitres};
   }
 
   function dateSection() {
@@ -373,11 +438,14 @@ export function mixForm(ctx, name, id, origin) {
 
   return {title:editing ? 'Edytuj partię' : 'Mieszam',subtitle:original?.recipeName,parent,form:true,
     body:form(`${editing ? '' : `<fieldset><legend>Receptura</legend><div class="actions" id="recipe-chips">${recipeChips()}</div></fieldset>
-      <fieldset><legend>Masa partii</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>`}
+      <fieldset><legend>Masa składników bazowych</legend><div class="actions" id="mass-chips">${chips()}</div></fieldset>`}
       <fieldset><legend>${editing ? 'Skład' : 'Składniki do dosypania'}</legend><div id="checklist">${checkList()}</div></fieldset>
-      <div class="value-row"><span>Masa mieszanki</span><strong id="actual-mass">${fmt.mixingQuantity(batchMass()/1000)}</strong></div>
+      <div class="value-row"><span>Masa składników bazowych</span><strong id="actual-mass">${fmt.mixingQuantity(batchMass()/1000)}</strong></div>
+      ${oilSection()}
       <div id="date-rows">${dateSection()}</div>`,editing ? 'Zapisz' : 'Zatwierdź partię',editing),
     change(element) {
+      if (element.id === 'oil') document.getElementById('oil-volume').hidden = !element.value;
+
       if (element.dataset.check !== undefined) {
         if (element.checked) selected.add(Number(element.dataset.check));
         else selected.delete(Number(element.dataset.check));
@@ -400,11 +468,13 @@ export function mixForm(ctx, name, id, origin) {
       const mixed = readDate(value('mixed'),'mixed','1900-01-01',ctx.today);
       const begins = readDate(value('start'),'start',mixed,original?.end ? addDays(original.end,-1) : '9999-12-30');
       if (items.some(row => row.grams <= 0)) throw new FieldError('','Zwiększ masę partii albo podaj ilości od 1 g dla każdego składnika.');
-      const mass = batchMass();
+      const oil = readOil();
+      const mass = batchMass() + (oil?.grams ?? 0);
       if (original?.remaining > mass) throw new FieldError('','Pozostałość przekracza masę mieszanki. Skoryguj ją w zakończeniu partii.');
       if (!editing && selected.size < items.length && !await ctx.confirm('Zatwierdzić partię?',
         'Nie wszystkie składniki są odhaczone. Zatwierdzić?', 'Zatwierdź')) return;
       const mixItems = items.map(({ingredientId,name,unit,density,grams,price}) => ({ingredientId,name,unit,density,grams,price}));
+      if (oil) mixItems.push(oil);
       const saved = await ctx.commit(data => putBatch(data,original,{
         recipeId:original?.recipeId ?? recipe.id, recipeName:original?.recipeName ?? recipe.name,
         date:mixed,start:begins,end:original?.end ?? null,remaining:original?.remaining ?? null,mass,items:mixItems
@@ -434,7 +504,7 @@ export function mixForm(ctx, name, id, origin) {
         const nextRecipe = get(ctx,'recipes',action.slice(7));
         if (recipe.id !== nextRecipe.id) {
           recipe = nextRecipe;
-          editedIndex = null; scale(); renderMix(); ctx.dirty();
+          editedIndex = null; scale(); renderMix(); refreshOilOptions(); ctx.dirty();
         }
       }
       if (action.startsWith('quantity:')) {
@@ -474,7 +544,7 @@ export function finishForm(ctx, id, origin) {
   }
   return {title:batch.end ? 'Edytuj zakończenie' : 'Zakończ partię',subtitle:batch.recipeName,parent,form:true,
     body:form(`${dateField('end','Pierwszy dzień bez tej partii',date,earliest)}
-      ${keypad('remaining','Pozostałość',asInput(remaining / 1000),'kg')}
+      ${numberField('remaining','Pozostałość',asInput(remaining / 1000),'kg')}
       <section class="card stack tight"><h2>Podgląd wyników</h2><div id="finish-preview">${preview({end:date,remaining})}</div></section>
       ${batch.end ? '<div>' + button('Cofnij zakończenie','reopen','tonal') + '</div>' : ''}`),
     change() {
@@ -536,7 +606,7 @@ export function cohortForm(ctx,id) {
         <div id="expected-wrap">${dateField('expected-start','Przewidywany start nieśności (opcjonalnie)',cohort?.expectedStart ?? '')}</div>
         <div id="laying-wrap">${dateField('laying-since','Faktyczny start nieśności, jeśli znany',cohort?.layingSince ?? '', '1900-01-01',ctx.today)}</div>
       </div>
-      ${keypad('count',cohort ? 'Początkowa liczba' : 'Liczba ptaków',asInput(cohort?.count),'szt.',false)}
+      ${numberField('count',cohort ? 'Początkowa liczba' : 'Liczba ptaków',asInput(cohort?.count),'szt.','numeric')}
       ${field('mark','Oznaczenie (opcjonalnie)',cohort?.mark,{length:80})}${textarea('notes','Uwagi (opcjonalnie)',cohort?.notes)}`,'Zapisz',Boolean(cohort)),
     mount() { updateFields(); },
     change(target) {
@@ -593,7 +663,7 @@ export function changeForm(ctx,id,kind = 'correction',changeId) {
     body:form(`${dateInput(ctx,'date','Data',old?.date,cohort.date)}
       ${kind === 'status' ? select('new-status','Nowy status',flockOptions(fmt.cohortStatuses),
         old?.status ?? next[current.status] ?? 'laying')
-        : keypad('count',countLabel[kind],asInput(old?.count),'szt.',false)}
+        : numberField('count',countLabel[kind],asInput(old?.count),'szt.','numeric')}
       ${kind === 'add' ? select('source','Pochodzenie nowych ptaków',[['purchase','Zakup'],['rearing','Odchów']],old?.origin ?? 'purchase') : ''}
       ${kind === 'loss' ? select('reason','Powód',flockOptions(fmt.lossReasons),old?.reason ?? 'died') : ''}
       ${textarea('notes','Uwagi (opcjonalnie)',old?.notes)}`,'Zapisz',Boolean(old)),

@@ -82,6 +82,5 @@ legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
 
 .stock-projection { padding: 0 12px 10px; }
 .stock-projection + .list-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
-.recipe-keypad { grid-column: 1 / -1; }
 html:has(.page--form):has(#snackbar:not([hidden])) { scroll-padding-bottom: calc(80px + var(--safe-bottom)); }
 body:has(#snackbar:not([hidden])) .page--form { padding-bottom: calc(80px + var(--safe-bottom)); }

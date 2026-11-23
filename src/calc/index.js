@@ -19,8 +19,22 @@ export function ingredientMass(amount, unit, density) {
   return grams;
 }
 
+export function isMixingOil(ingredient) {
+  return ingredient.unit === 'l' && (ingredient.oil ?? /^olej(?:\s|$)/iu.test(ingredient.name.trim()));
+}
+
+export function recipeBaseItems(recipe, ingredients) {
+  return recipe.items.filter(item => {
+    const ingredient = ingredients.find(row => row.id === item.ingredientId);
+    return !ingredient || !isMixingOil(ingredient);
+  });
+}
+
+export const batchOil = batch => batch.items.find(item => item.oil);
+export const batchBaseMass = batch => batch.mass - (batchOil(batch)?.grams ?? 0);
+
 export function recipeComposition(recipe, ingredients) {
-  const items = recipe.items.map(({ingredientId, amount}) => {
+  const items = recipeBaseItems(recipe,ingredients).map(({ingredientId, amount}) => {
     const ingredient = ingredients.find(row => row.id === ingredientId);
     if (!ingredient) throw new RangeError('Brakuje składnika receptury.');
     return {ingredientId, amount, name: ingredient.name, unit: ingredient.unit,
@@ -28,7 +42,7 @@ export function recipeComposition(recipe, ingredients) {
       grams: ingredientMass(amount, ingredient.unit, ingredient.density)};
   });
   const mass = items.reduce((sum, item) => sum + item.grams, 0);
-  if (!Number.isSafeInteger(mass) || !mass) throw new RangeError('Receptura musi zawierać składniki.');
+  if (!recipe.items.length || !Number.isSafeInteger(mass)) throw new RangeError('Receptura musi zawierać składniki.');
   return {mass, items: items.map(item => ({...item, share: item.grams / mass}))};
 }
 
@@ -74,11 +88,11 @@ function unionDays(batches) {
   return total;
 }
 
-export function dailyAverage(batches, fallback, today) {
+export function dailyAverage(batches, fallback, today, consumedMass = batch => batchResult(batch).consumed) {
   const recent = batches.filter(row => !row.deleted && row.end && row.end <= today && row.end > row.start)
     .sort((a, b) => b.end.localeCompare(a.end) || b.createdAt.localeCompare(a.createdAt)).slice(0, 3);
   const days = unionDays(recent);
-  const consumed = recent.reduce((sum, row) => sum + batchResult(row).consumed, 0);
+  const consumed = recent.reduce((sum, row) => sum + consumedMass(row), 0);
   return days > 0 ? consumed / days : fallback;
 }
 

@@ -1,9 +1,9 @@
 import {stores, live, refreshPrices} from './db.js';
-import {flockEventKind,recipeComposition,validCohortHistory} from './calc/index.js';
+import {flockEventKind,ingredientMass,recipeComposition,validCohortHistory} from './calc/index.js';
 import {validDate} from '../ui/components.js';
 
 const format = 'kurnik-backup';
-const version = 2;
+const version = 3;
 const text = (value, max = 1000) => typeof value === 'string' && value.length <= max;
 const name = value => text(value,80) && value.trim().length > 0;
 const int = (value,min = 0,max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= min && value <= max;
@@ -35,7 +35,7 @@ export function decodeBackup(raw) {
   let source;
   try { source = JSON.parse(raw); }
   catch { throw new Error('Plik nie jest poprawnym JSON-em. Wybierz kopię Kurnika.'); }
-  if (source?.format !== format || ![1,version].includes(source.version) || !source.data || !date(source.exportedAt)) {
+  if (source?.format !== format || ![1,2,version].includes(source.version) || !source.data || !date(source.exportedAt)) {
     throw new Error('Format lub wersja kopii nie jest obsługiwana.');
   }
   const data = Object.fromEntries(stores.map(key => [key,source.data[key]]));
@@ -49,7 +49,8 @@ export function decodeBackup(raw) {
   const activeIngredients = new Set(live(data.ingredients).map(row => row.id));
   const activeBatches = new Set(live(data.batches).map(row => row.id));
   const cohorts = new Map(data.cohorts.map(row => [row.id,row]));
-  requireThat(data.ingredients.every(row => name(row.name) && units(row) && price(row.price)));
+  requireThat(data.ingredients.every(row => name(row.name) && units(row) && price(row.price) &&
+    (row.oil == null || (typeof row.oil === 'boolean' && (!row.oil || row.unit === 'l')))));
   for (const recipe of data.recipes) {
     requireThat(name(recipe.name) && text(recipe.notes) && typeof recipe.current === 'boolean' &&
       Array.isArray(recipe.items) && recipe.items.length > 0 && recipe.items.every(row =>
@@ -70,6 +71,10 @@ export function decodeBackup(raw) {
       batch.items.every(row => row && ingredientIds.has(row.ingredientId) && name(row.name) && units(row) &&
         int(row.grams,1) && price(row.price)) && uniqueKeys(batch.items,'ingredientId') &&
       batch.items.reduce((sum,row) => sum + row.grams,0) === batch.mass);
+    const oilItems = batch.items.filter(item => item.oil !== undefined || item.millilitres !== undefined);
+    requireThat(oilItems.length < batch.items.length && oilItems.length <= 1 && oilItems.every(item =>
+      item.oil === true && item.unit === 'l' && int(item.millilitres,1) &&
+      item.grams === ingredientMass(item.millilitres,'l',item.density)));
   }
   const batchEvents = new Map();
   for (const event of data.ingredientEvents) {
