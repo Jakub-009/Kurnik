@@ -91,8 +91,8 @@ export const t = {
   // Pasza
   feed: 'Pasza',
   leftNow: amount => 'Zostało około ' + amount,
-  enoughUntil: (date, days) => 'Starczy do około ' + date + ' · ' + days,
-  basisBirds: (birds, grams, kg) => 'Liczone: ' + birds + ' × ' + grams + ' g = ' + kg + ' kg dziennie',
+  enoughUntil: (date, days) => 'Aktualna partia starczy do około ' + date + ' · ' + days,
+  basisBirds: (birds, grams, kg) => 'Wyliczone na podstawie wzrotu (ilośćp kur x średnie zużycie): ' + birds + ' × ' + grams + ' g = ' + kg + ' kg dziennie',
   basisDaily: kg => 'Liczone: ' + kg + ' kg dziennie',
   finishAndMix: 'Zakończ i mieszaj nową',
   finishBatch: 'Zakończ partię',
@@ -100,7 +100,7 @@ export const t = {
   batchFinished: 'Zakończono partię',
   mixedOn: (mixed, start) => 'Zmieszana ' + mixed + ' · karmienie od ' + start,
   perDay: kg => kg + ' dziennie',
-  howLong100: 'Na ile starcza 100 kg',
+  howLong100: 'Na ile wystarczy 100 kg gotowej mieszanki:',
   chartTitle: 'Zużycie dziennie w kolejnych partiach',
   chartLabel: 'Wykres zużycia dziennego, kg',
   recipes: 'Receptury',
@@ -255,9 +255,9 @@ export const t = {
   hasStockEntries: 'Nie można usunąć składnika, który ma wpisy w magazynie.',
 
   // Stado
-  together: 'Razem',
+  together: 'Ilość kur w Twoim kurniku',
   cohorts: 'Roczniki',
-  addCohort: 'Dodaj rocznik',
+  addCohort: 'Dodaj nowe kury',
   editCohort: 'Edytuj rocznik',
   hens: 'Kury',
   roosters: 'Koguty',
@@ -270,7 +270,7 @@ export const t = {
   boughtOrHatched: 'Skąd są',
   purchaseDate: 'Data zakupu',
   hatchDate: 'Data wyklucia',
-  ageAtPurchase: 'Wiek przy zakupie w tygodniach (opcjonalnie)',
+  ageAtPurchase: 'Wiek przy zakupie w tygodniach',
   markOptional: 'Oznaczenie (opcjonalnie)',
   mark: 'Oznaczenie',
   age: 'Wiek',
@@ -292,8 +292,8 @@ export const t = {
 
   // Klucie i pisklęta
   rearingTitle: 'Klucie i pisklęta',
-  addRearing: 'Wstaw jaja albo dodaj pisklęta',
-  newRearing: 'Klucie albo pisklęta',
+  addRearing: 'Dodaj pisklaki lub ustaw inkubację',
+  newRearing: 'Klucie oraz inkubacja',
   editRearing: 'Edytuj klucie',
   incubation: 'Klucie',
   chicks: 'Pisklęta',
