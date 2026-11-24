@@ -332,8 +332,8 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
   assert.match(screen.body, /Brakuje na 50 kg[\s\S]*Śruta sojowa 6 kg/);
   assert.match(screen.body, /Zapasy[\s\S]*Śruta sojowa/);
   assert.equal((screen.body.match(/class="supply-row/g) ?? []).length, 3);
-  assert.match(screen.body, /Stado[\s\S]*>30<[\s\S]*26 kur · 4 koguty/);
-  assert.match(screen.body, /Zużycie dziennie[\s\S]*3,6<span class="unit">kg[\s\S]*120 g na ptaka · wg Ustawień/);
+  assert.match(screen.body, /Kury[\s\S]*>30<span class="unit">szt\.[\s\S]*26 kur · 4 koguty/);
+  assert.match(screen.body, /Zużycie dziennie[\s\S]*3,6<span class="unit">kg[\s\S]*120 g na sztukę · wg Ustawień/);
   assert.doesNotMatch(screen.body, /Zrób kopię/);
   data.settings[0].lastExport = '2026-09-01';
   assert.match(start(ctxOf(data, now)).body, /Zrób kopię/);

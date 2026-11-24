@@ -148,10 +148,10 @@ function needsStrip(ctx) {
 
 function flockTile(ctx) {
   const {flock, cohorts} = ctx.derived;
-  if (!cohorts.length) return tile({label:t.flock, value:'—', caption:t.addBirdsShort, route:'cohort-form'});
+  if (!cohorts.length) return tile({label:t.birdsTile, value:'—', caption:t.addBirdsShort, route:'cohort-form'});
   const parts = [flock.hens ? fmt.hens(flock.hens) : '', flock.roosters ? fmt.roosters(flock.roosters) : '',
     flock.young ? fmt.chicks(flock.young) : ''].filter(Boolean);
-  return tile({label:t.flock, value:figure(fmt.number(flock.total)), caption:parts.join(' · '), route:'flock'});
+  return tile({label:t.birdsTile, value:figure(fmt.number(flock.total), t.pcs), caption:parts.join(' · '), route:'flock'});
 }
 
 function useTile(ctx) {
