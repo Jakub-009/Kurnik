@@ -77,7 +77,7 @@ export const t = {
   addBirdsShort: 'Dodaj rocznik',
   monthCost: 'Pasza na miesiąc',
   fromPrices: 'wg cen składników',
-  supplies: 'Zapasy',
+  supplies: 'Zapasy na wyczerpaniu',
   toHatch: 'do klucia',
   hatching: 'klują się',
   hatchLate: 'po terminie',
