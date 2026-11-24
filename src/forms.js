@@ -3,8 +3,8 @@ import {addDays, batchResult, cohortCounts, cohortEvents, cohortStage, defaultPe
 import {live, record} from './db.js';
 import {find, isFinished, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
 import {missing} from './views.js';
-import {button, changeRow, choice, chosen, dateField, details, empty, field, FieldError, form, html, iconButton,
-  link, numberField, readDate, readName, readNumber, select, textarea} from '../ui/components.js';
+import {button, changeRow, choice, chosen, dateField, empty, field, FieldError, figure, form, html, iconButton,
+  link, numberField, readDate, readName, readNumber, select, textarea, tile} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 import {t} from '../ui/texts.js';
@@ -122,6 +122,7 @@ export function recipeForm(ctx, id) {
   }
   return {title:old ? t.editRecipe : t.newRecipe, parent, form:true,
     body:form(`${field('name', t.nameLabel, old?.name, {length:80})}<fieldset class="stack tight"><legend>${t.ingredients}</legend>
+      <div class="recipe-head" aria-hidden="true"><span>${t.ingredient}</span><span>${t.amount}</span></div>
       <div class="stack tight" id="recipe-lines">${items}</div><div class="actions">
       ${button(t.addLine, 'add-line', 'tonal', 'plus')}${button(t.createIngredient, 'new-ingredient', 'text', 'plus')}</div></fieldset>
       <fieldset class="card stack" id="new-ingredient" hidden><legend>${t.createIngredient}</legend>
@@ -313,7 +314,11 @@ export function movementForm(ctx, type, ingredientId, eventId) {
     return stock(earlier, ingredient.id, old?.id);
   };
   const initialAmount = old ? showAmount(correction ? old.measured ?? (currentStock() + old.grams) : Math.abs(old.grams), ingredient) : null;
-  const signed = (grams, sign = true) => fmt.stockQuantity(showAmount(grams, ingredient), ingredient.unit, sign);
+  const signed = (grams, sign = true) => {
+    const shown = showAmount(grams, ingredient);
+    const text = fmt.quantity(Math.abs(shown), ingredient.unit, true);
+    return (shown < 0 && text !== fmt.quantity(0, ingredient.unit, true) ? '−' : sign && shown > 0 ? '+' : '') + text;
+  };
   const initialPrice = item => old ? old.price : item.price;
   const defaultMode = old?.priceMode ?? 'per-kg';
   const shownPrice = (price, mode, item) => {
@@ -670,18 +675,19 @@ export function finishForm(ctx, id, origin) {
   }
   function preview({end, remaining}) {
     const {daily, days} = batchResult({...batch, end, remaining});
-    return details([[t.feedingDays, fmt.days(days)], [t.dailyUse, t.kgPerDay(fmt.number(daily / 1000, 2))],
-      ...(daily > 0 ? [[t.howLong100, fmt.days(100000 / daily)]] : [])]);
+    return [tile({label:t.feedingDays, value:figure(fmt.days(days))}),
+      tile({label:t.dailyTile, value:daily > 0 ? figure(fmt.number(daily / 1000, 1), 'kg') : '—'}),
+      ...(daily > 0 ? [tile({label:t.lasts100, value:figure(fmt.days(100000 / daily))})] : [])].join('');
   }
   return {title:batch.end ? t.finishEditTitle : t.finishTitle, subtitle:batch.recipeName, parent, form:true,
     body:form(`${dateField('end', t.lastDayField, lastDay, earliest)}
       ${numberField('remaining', t.leftoverField, asInput(remaining / 1000), 'kg')}
-      <section class="card stack tight"><h2>${t.preview}</h2><div id="finish-preview">${preview({end:addDays(lastDay, 1), remaining})}</div></section>
+      <section class="stack tight"><h2 class="list-title">${t.preview}</h2><div class="tiles" id="finish-preview">${preview({end:addDays(lastDay, 1), remaining})}</div></section>
       ${batch.end ? '<div>' + button(t.reopen, 'reopen', 'text') + '</div>' : ''}`),
     change() {
       const output = document.getElementById('finish-preview');
       try { output.innerHTML = preview(getInput()); }
-      catch { output.textContent = t.fillFinish; }
+      catch { output.innerHTML = '<p class="muted">' + html(t.fillFinish) + '</p>'; }
     },
     submit() {
       const values = getInput();

@@ -1,4 +1,4 @@
-const VERSION = '1.8.0';
+const VERSION = '1.8.1';
 const CACHE_PREFIX = 'kurnik:' + self.registration.scope + ':';
 const CACHE = CACHE_PREFIX + VERSION;
 const SHELL = [

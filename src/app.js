@@ -7,7 +7,7 @@ import * as forms from './forms.js';
 import {FieldError, html, showFormError} from '../ui/components.js';
 import {t} from '../ui/texts.js';
 
-const version = '1.8.0';
+const version = '1.8.1';
 
 const app = document.getElementById('app');
 const snackbar = document.getElementById('snackbar');

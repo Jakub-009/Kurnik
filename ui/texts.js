@@ -199,7 +199,7 @@ export const t = {
   noHistory: 'Nie ma jeszcze wpisów.',
   movementNames: {purchase: 'Zakup', addition: 'Własny', correction: 'Korekta stanu',
     withdrawal: 'Inne pobranie', batch: 'Zużyte w partii'},
-  addToStock: 'Dodaj do magazynu',
+  addToStock: 'Dodaj na stan',
   stockCorrection: 'Korekta stanu',
   withdrawal: 'Inne pobranie',
   source: 'Skąd',

@@ -387,7 +387,9 @@ test('Magazyn: karta „Wpisz stany” przy pierwszym uruchomieniu, potem „Wpi
   assert.doesNotMatch(body, /Wpisz stany/);
   assert.match(body, /wpisz stan/);
   assert.match(body, /<span class="s-val">25 kg<\/span>/);
-  assert.match(warehouse(ctxOf(data)).floating, /Dodaj na stan/);
+  assert.match(body, /href="#movement\/add"[^>]*>[\s\S]*Dodaj na stan/);
+  assert.equal(warehouse(ctxOf(data)).floating, undefined);
+  assert.equal(feed(ctxOf(data)).floating, undefined);
   assert.doesNotMatch(body, /około|ok\./);
 });
 

@@ -202,3 +202,46 @@ a.tile:active, a.hero-link:active, .supply-row:active { opacity: .7; }
 .s-bar::-moz-progress-bar { background: var(--md-sys-color-primary); }
 .s-row--low .s-bar::-moz-progress-bar { background: var(--md-sys-color-tertiary); }
 .display { color: var(--ink); font-weight: 800; letter-spacing: -.02em; }
+
+/* Formularze w nowym stylu: białe pola na kremowym tle, krótkie etykiety, kafelkowe przełączniki. */
+:root { --field-border: #D8D4C7; }
+.page--main { padding-bottom: calc(var(--navigation-bar) + 24px + var(--safe-bottom)); }
+.screen-form { gap: 16px; }
+.field { gap: 6px; }
+.field label, .field-label, legend { font-size: .875rem; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+.field input, .field select, .field textarea {
+  min-height: 52px; border: 1px solid var(--field-border); border-radius: 12px; padding: 10px 14px;
+  background: #FFFFFF; color: var(--ink); font-size: 1rem; }
+.field select { appearance: none; padding-inline-end: 40px;
+  background: #FFFFFF url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%236B6A60' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--md-sys-color-primary); box-shadow: 0 0 0 1px var(--md-sys-color-primary); }
+.field textarea { min-height: 88px; }
+.field [aria-invalid="true"] { border-color: var(--md-sys-color-error); box-shadow: 0 0 0 1px var(--md-sys-color-error); }
+.field-error:empty { display: none; }
+.number-field input { min-height: 64px; border-radius: 14px; font-size: 1.75rem; font-weight: 700; letter-spacing: -.01em; }
+.number-unit { color: var(--muted); font-weight: 500; }
+.segmented { border: 0; border-radius: 0; overflow: visible; gap: 8px; }
+.segmented label + label { border: 0; }
+.segmented span { min-height: 48px; border: 1px solid var(--field-border); border-radius: 12px; background: #FFFFFF; font-weight: 600; }
+.segmented input:checked + span { border-color: transparent; }
+.segmented input:focus-visible + span { border-radius: 12px; }
+.button--chip, .chip { background: #FFFFFF; border-color: var(--field-border); border-radius: 12px; }
+.button--filled { border-radius: 14px; font-size: 1rem; font-weight: 700; }
+.button--tonal { border-radius: 14px; font-weight: 600; }
+.form-actions .button--danger { margin-inline: auto; }
+.value-row { min-height: 52px; padding: 2px 4px 2px 14px; border-radius: 12px; background: #FFFFFF; border: 1px solid var(--field-border); }
+.value-row strong { color: var(--ink); }
+.value-row .button { font-weight: 700; }
+.recipe-head { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 48px; gap: 8px; padding-inline: 2px;
+  font-size: .8125rem; font-weight: 600; color: var(--muted); }
+.recipe-line { align-items: center; padding-bottom: 8px; }
+.recipe-line:not(:last-child) { border-bottom: 0; }
+.recipe-line .field label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.recipe-line > .icon-button { margin-top: 0; color: var(--muted); }
+.checklist-row { border-bottom-color: var(--md-sys-color-outline-variant); }
+.checklist-row input { accent-color: var(--md-sys-color-primary); }
+.hero-buttons { margin: 0; }
+.hero-buttons .button { flex: 1; width: auto; min-height: 48px; }
+.hero-buttons .button .icon { width: 20px; height: 20px; flex-basis: 20px; }
+dialog { border-radius: 20px; background: #FFFFFF; }
+.error-panel { border-radius: 12px; }

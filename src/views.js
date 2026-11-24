@@ -3,7 +3,7 @@ import {addDays, batchAdditives, batchBaseMass, batchOil, batchResult, cohortAge
   recipeComposition, roundPurchase, savings, scaleBatch} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, isFinished, latestFirst, showAmount} from './model.js';
-import {button, details, empty, fab, figure, headLink, hero, html, line, link, listCard, side, sideCount, strip, textLink, tile} from '../ui/components.js';
+import {button, details, empty, figure, headLink, hero, html, line, link, listCard, side, sideCount, strip, textLink, tile} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 import {t} from '../ui/texts.js';
@@ -204,7 +204,8 @@ export function start(ctx) {
 function activeHero(ctx) {
   const {active, openStatus} = ctx.derived;
   const today = ctx.today;
-  if (!active) return hero({label:t.inUse, value:'—', caption:t.noMixInUse});
+  const mixButton = link(t.mix, 'mix', 'filled', 'plus');
+  if (!active) return hero({label:t.inUse, value:'—', caption:t.noMixInUse, after:`<div class="hero-buttons">${mixButton}</div>`});
   const {batch} = active;
   const base = batchBaseMass(batch);
   const remaining = Math.max(0, active.remaining);
@@ -216,7 +217,7 @@ function activeHero(ctx) {
     openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : ''].filter(Boolean).join(' · ');
   return hero({label:t.inUse + ' · ' + batch.recipeName, value:figure(fmt.mass(remaining)) + '<span class="of">' + html(t.of(fmt.mass(base))) + '</span>',
     sides, bar:[remaining, base], caption, low:gone, route:'batch/' + batch.id,
-    after:`<div class="hero-buttons">${textLink(t.finishBatch, 'finish/' + batch.id)}</div>`});
+    after:`<div class="hero-buttons">${mixButton}${link(t.finishBatch, 'finish/' + batch.id, 'tonal')}</div>`});
 }
 
 function usageChart(ctx) {
@@ -269,7 +270,7 @@ function batchRows(ctx) {
 export function feed(ctx) {
   const {model} = ctx.derived;
   const lasts = model.daily > 0 ? figure(fmt.days(100000 / model.daily)) : '—';
-  return {title:t.feed, floating:fab(t.mix, 'mix', 'plus'), body:`<div class="stack">
+  return {title:t.feed, body:`<div class="stack">
     ${activeHero(ctx)}
     <div class="tiles">
       ${tile({label:t.lasts100, value:lasts, caption:model.fromHistory ? t.atCurrentUse : t.fromSettingsShort})}
@@ -386,11 +387,11 @@ export function warehouse(ctx) {
   const {stocks} = ctx.derived;
   const first = firstUnknown(stocks);
   const none = stocks.length && !stocks.some(row => row.known);
-  return {title:t.stock, floating:fab(t.addToStockShort, 'movement/add', 'plus'), body:`<div class="stack">
+  return {title:t.stock, body:`<div class="stack">
     ${none && first ? strip({title:t.enterStocks, line:t.enterStocksLine, route:'movement/correction/' + first.id, label:t.enterShort, tone:'info'}) : ''}
     ${listCard(t.stockList, stocks.length ? stocks.map(item => stockLine(ctx, item)).join('')
       : '<div class="r-row"><small>' + html(t.noIngredients) + '</small></div>', headLink(t.newMale, 'ingredient-form'))}
-    </div>`};
+    ${stocks.length ? '<div>' + textLink(t.addToStockShort, 'movement/add', 'plus') + '</div>' : ''}</div>`};
 }
 
 const formatRate = (price, ingredient) => fmt.money(price.cents * 1000 / price.grams) + t.perKgSuffix +
