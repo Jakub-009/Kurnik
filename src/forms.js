@@ -314,11 +314,7 @@ export function movementForm(ctx, type, ingredientId, eventId) {
     return stock(earlier, ingredient.id, old?.id);
   };
   const initialAmount = old ? showAmount(correction ? old.measured ?? (currentStock() + old.grams) : Math.abs(old.grams), ingredient) : null;
-  const signed = (grams, sign = true) => {
-    const shown = showAmount(grams, ingredient);
-    const text = fmt.quantity(Math.abs(shown), ingredient.unit, true);
-    return (shown < 0 && text !== fmt.quantity(0, ingredient.unit, true) ? '−' : sign && shown > 0 ? '+' : '') + text;
-  };
+  const signed = (grams, sign = true) => fmt.stockQuantity(showAmount(grams, ingredient), ingredient.unit, sign);
   const initialPrice = item => old ? old.price : item.price;
   const defaultMode = old?.priceMode ?? 'per-kg';
   const shownPrice = (price, mode, item) => {

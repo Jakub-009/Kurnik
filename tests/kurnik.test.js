@@ -404,8 +404,8 @@ test('ekran składnika: 22,5 kg po zużyciu 2,5 kg z 25 kg, „Ile dokupić” i
   const usage = data.ingredientEvents.find(event => event.batchId === batch.id);
   const ctx = ctxOf(data);
   const page = ingredientView(ctx, ingredient.id);
-  // Na listach i w karcie stan w pełnych kg (22,5 → 23), dokładny stan jest w szczegółach ruchu.
-  assert.match(page.body, /Stan[\s\S]*23<span class="unit">kg/);
+  // Stan zawsze dokładny – bez zaokrąglania do pełnych kg.
+  assert.match(page.body, /Stan[\s\S]*22,5<span class="unit">kg/);
   assert.match(page.body, /Potrzeba na 2 mies\.[\s\S]*kg/);
   assert.match(page.body, /Zakup[\s\S]*2,00\szł\/kg · Dostawa[\s\S]*\+25 kg/);
   assert.match(page.body, /Zużyte w partii[\s\S]*−2,5 kg/);

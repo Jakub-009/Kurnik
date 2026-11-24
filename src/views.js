@@ -27,12 +27,11 @@ export function frame(screen, route) {
     <main class="page ${main ? 'page--main' : ''} ${form ? 'page--form' : ''}" id="content">${body}</main>${floating}${navigation}`;
 }
 
-// Dokładny stan (szczegóły ruchu) i stan do list (pełne kg, poniżej 10 jedno miejsce po przecinku).
+// Stan składnika zawsze dokładnie (do grama, bez zbędnych zer): 1,25 kg, 22,5 kg, 187 kg.
 const quantity = (grams, ingredient, signed = false) =>
   fmt.stockQuantity(showAmount(grams, ingredient), ingredient.unit, signed);
-const amount = (grams, ingredient) => fmt.quantity(showAmount(grams, ingredient), ingredient.unit);
-const signedAmount = (grams, ingredient) =>
-  (grams > 0 ? '+' : grams < 0 ? '−' : '') + fmt.quantity(Math.abs(showAmount(grams, ingredient)), ingredient.unit);
+const amount = (grams, ingredient) => quantity(grams, ingredient);
+const signedAmount = (grams, ingredient) => quantity(grams, ingredient, true);
 const zloty = cents => fmt.number(Math.round(cents / 100));
 const perKg = cents => fmt.money(cents) + t.perKgSuffix;
 
@@ -351,8 +350,8 @@ export function batchView(ctx, id, fromEventId) {
     caption:result.birds > 0 ? t.perBirdShort(fmt.number(result.daily / result.birds, 0)) : ''}) : '';
   const items = batch.items.map(item => {
     const extra = item.additive || item.oil;
-    const shown = item.millilitres != null ? fmt.quantity(item.millilitres / 1000, 'l', true)
-      : fmt.quantity(showAmount(item.grams, item), item.unit, true);
+    const shown = item.millilitres != null ? fmt.stockQuantity(item.millilitres / 1000, 'l')
+      : fmt.stockQuantity(showAmount(item.grams, item), item.unit);
     return line({title:item.name, strong:false, sub:extra ? html(t.additiveShort) : '', value:html(shown)});
   }).join('');
   return {title:t.batch, subtitle:batch.recipeName, parent, edit:'batch-form/' + id, body:`<div class="stack">
