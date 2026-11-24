@@ -3,7 +3,7 @@ import {addDays, batchAdditives, batchBaseMass, batchOil, cohortAge, cohortCount
   savings, scaleBatch} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, isFinished, latestFirst, showAmount} from './model.js';
-import {banner, button, details, empty, fab, forecast, homeCard, html, link, row, textLink, warning} from '../ui/components.js';
+import {button, details, empty, fab, figure, forecast, html, link, row, strip, textLink, tile, warning} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 import {t} from '../ui/texts.js';
@@ -86,74 +86,118 @@ function otherOpen(ctx) {
   return count > 0 ? t.otherOpen(count) : '';
 }
 
-// Czy w magazynie wystarczy na kolejną partię tej samej masy co ostatnia.
-function nextBatchCheck(ctx) {
+// Czego brakuje na kolejną partię tej samej masy co ostatnia: {mass, missing:[tekst], unknown:[składnik]}.
+function nextBatchNeeds(ctx) {
   const {composition, batches, stocks} = ctx.derived;
-  if (!composition) return '';
+  if (!composition) return null;
   const mass = lastBatchMass(batches);
   const byId = new Map(stocks.map(row => [row.ingredient.id, row]));
-  const missing = [];
-  let unknown = false;
+  const missing = [], unknown = [];
   for (const item of scaleBatch(composition, mass)) {
     const entry = byId.get(item.ingredientId);
-    if (!entry?.known) { unknown = true; continue; }
+    if (!entry) continue;
+    const ingredient = entry.ingredient;
+    if (!entry.known) { unknown.push(ingredient); continue; }
     if (entry.grams < item.grams) {
-      const ingredient = entry.ingredient;
-      missing.push(item.name + ' ' + fmt.number(roundPurchase(item.grams - entry.grams, ingredient.unit, ingredient.density), 1) + ' ' + ingredient.unit);
+      const need = roundPurchase(item.grams - entry.grams, ingredient.unit, ingredient.density);
+      missing.push(item.name + ' ' + fmt.quantity(need, ingredient.unit));
     }
   }
-  if (missing.length) return warning(t.nextBatchMissing(fmt.mass(mass), missing.join(', ')));
-  return html(unknown ? t.nextBatchUnknown : t.nextBatchReady(fmt.mass(mass)));
+  return {mass, missing, unknown};
 }
 
-function nextMixCard(ctx) {
-  const {active} = ctx.derived;
-  const check = nextBatchCheck(ctx);
+// Karta główna Startu: kiedy następne mieszanie, ile zostało, do kiedy starczy.
+function nextMixHero(ctx) {
+  const {active, openStatus} = ctx.derived;
+  const today = ctx.today;
+  const mixButton = `<div class="hero-action">${link(t.mix, 'mix', 'filled', 'plus')}</div>`;
   if (!active) {
-    return homeCard({title:t.nextMix, caption:html(t.noMixInUse) + (check ? '<br>' + check : ''),
-      action:link(t.mix, 'mix', 'tonal', 'plus')});
+    return `<section class="hero"><span class="hero-label">${t.nextMix}</span>
+      <p class="hero-value">${figure(t.now)}</p><p class="hero-caption">${html(t.noMixInUse)}</p>${mixButton}</section>`;
   }
+  const base = batchBaseMass(active.batch);
+  const remaining = Math.max(0, active.remaining);
   const end = runOut(ctx);
   const gone = active.remaining <= 0;
-  const value = gone ? t.now : end ? t.inDays(t.approx + ' ' + fmt.days(end.days)) : t.noForecast;
-  const lines = [gone ? warning(t.mixShouldBeGone)
-    : end ? html(t.mixRunsOut(fmt.listDate(end.date, ctx.today), kgText(ctx.derived.mixed))) : '', check, html(otherOpen(ctx))];
-  return homeCard({title:t.nextMix, value:html(value), low:gone, route:'feed', caption:lines.filter(Boolean).join('<br>')});
+  const value = gone ? figure(t.now) : !end ? '—' : end.days < .5 ? figure(t.today) : '<span class="approx">≈</span>' + figure(fmt.days(end.days));
+  const side = [end && !gone ? [t.until, fmt.shortDate(end.date, today)] : null, [t.left, fmt.mass(remaining)]]
+    .filter(Boolean).map(([label, text]) => `<span>${html(label)} <b>${html(text)}</b></span>`).join('');
+  const open = openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : '';
+  const caption = [gone ? t.mixGone : '', open].filter(Boolean).join(' · ');
+  const soon = gone || (end && end.days <= 3);
+  return `<section class="hero${gone ? ' hero--low' : ''}"><a class="hero-link" href="#feed">
+    <span class="hero-top"><span><span class="hero-label">${t.nextMix}</span><span class="hero-value">${value}</span></span>
+      <span class="hero-side">${side}</span></span>
+    <progress class="hero-bar" aria-hidden="true" value="${remaining}" max="${base}"></progress>
+    ${caption ? '<span class="hero-caption">' + html(caption) + '</span>' : ''}</a>${soon ? mixButton : ''}</section>`;
 }
 
-function runningOutCard(ctx) {
-  const {stocks, settings, daily, mixed} = ctx.derived;
-  const heading = `<h2>${t.runningOutFirst}</h2>`;
-  if (!stocks.some(row => row.known)) {
-    const first = firstUnknown(stocks);
-    return `<section class="card home-card stack tight">${heading}<p class="muted">${t.enterStocksInfo}</p>
-      ${first ? '<div>' + link(t.enterStocks, 'movement/correction/' + first.id, 'tonal') + '</div>' : ''}</section>`;
+// Pasek tylko wtedy, gdy czegoś brakuje na następną partię albo nie wszystko jest wpisane.
+function needsStrip(ctx) {
+  const needs = nextBatchNeeds(ctx);
+  if (!needs) return '';
+  if (needs.missing.length) {
+    return strip({title:t.shortFor(fmt.mass(needs.mass)), line:needs.missing.join(' · '), route:'stock', label:t.toStock});
   }
+  if (needs.unknown.length) {
+    return strip({title:t.stocksUnknown, line:needs.unknown.map(row => row.name).join(', '),
+      route:'movement/correction/' + needs.unknown[0].id, label:t.enterShort, tone:'info'});
+  }
+  return '';
+}
+
+function flockTile(ctx) {
+  const {flock, cohorts} = ctx.derived;
+  if (!cohorts.length) return tile({label:t.flock, value:'—', caption:t.addBirdsShort, route:'cohort-form'});
+  const parts = [flock.hens ? fmt.hens(flock.hens) : '', flock.roosters ? fmt.roosters(flock.roosters) : '',
+    flock.young ? fmt.chicks(flock.young) : ''].filter(Boolean);
+  return tile({label:t.flock, value:figure(fmt.number(flock.total)), caption:parts.join(' · '), route:'flock'});
+}
+
+function useTile(ctx) {
+  const {model} = ctx.derived;
+  const caption = [model.perBird != null ? t.perBirdShort(fmt.number(model.perBird, 0)) : '',
+    model.fromHistory ? '' : t.fromSettingsShort].filter(Boolean).join(' · ');
+  return tile({label:t.dailyTile, value:figure(fmt.number(model.daily / 1000, 1), 'kg'), caption, route:'feed'});
+}
+
+function costTile(ctx) {
+  const {model, current, composition} = ctx.derived;
+  if (!current || !composition || !(model.daily > 0)) return '';
+  const cost = mixtureCost([...composition.items, ...composition.additives]);
+  if (cost.kind !== 'full') return '';
+  const zloty = Math.round(model.daily / 1000 * cost.perKg * 30 / 100);
+  return tile({label:t.monthCost, value:figure(fmt.number(zloty), 'zł'), caption:t.fromPrices, route:'recipe/' + current.id});
+}
+
+// Inkubacja i pisklęta jako kafelki. „Inkubacja 2026” zostaje bez powtórzenia słowa.
+const stageLabel = (word, name) => name.toLowerCase().startsWith(word.toLowerCase()) ? name : word + ': ' + name;
+
+function rearingTile(cohort, ctx) {
+  const route = 'cohort/' + cohort.id;
+  if (cohortStage(cohort) === 'incubation') {
+    const state = incubation(cohort, ctx.today);
+    const late = state.day > 22;
+    const value = late ? figure(t.hatchLate) : state.early ? figure(t.hatching) : figure(fmt.days(state.left));
+    const caption = [late || state.early ? '' : t.toHatch, t.incubationDayShort(fmt.number(state.day))].filter(Boolean).join(' · ');
+    return tile({label:stageLabel(t.incubation, cohort.name), value, caption, route, low:late});
+  }
+  const count = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
+  const caption = [t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))),
+    cohort.rearing.feedFrom ? t.feedOwnShort : t.feedBoughtShort].join(' · ');
+  return tile({label:stageLabel(t.chicks, cohort.name), value:figure(fmt.number(count)), caption, route});
+}
+
+// Trzy składniki, które skończą się najszybciej. Same dni; ile dokupić jest w szczegółach składnika.
+function suppliesCard(ctx) {
+  const {stocks, settings} = ctx.derived;
   const rows = stocks.filter(row => row.outlook).slice(0, 3);
-  if (!rows.length) return `<section class="card home-card stack tight">${heading}<p class="muted">${t.noForecastInfo}</p></section>`;
-  return `<section class="card home-card stack tight">${heading}<div class="mini-list">${rows.map(({ingredient, grams, rate, outlook}) => {
+  if (!rows.length) return '';
+  return `<section class="list supplies"><h2 class="list-title">${t.supplies}</h2>${rows.map(({ingredient, outlook}) => {
     const low = outlook.days < settings.threshold;
-    const need = low ? roundPurchase(purchaseNeed(grams, rate, daily, mixed, 60), ingredient.unit, ingredient.density) : 0;
-    return `<a class="mini-row${low ? ' mini-row--low' : ''}" href="#ingredient/${html(ingredient.id)}">
-      <span class="grow"><span>${html(ingredient.name)}</span>${need > 0 ? '<small>' + html(t.buyAbout(fmt.number(need, 1) + ' ' + ingredient.unit)) + '</small>' : ''}</span>
-      <strong>${low ? icon('warn') : ''}${t.approx} ${fmt.days(outlook.days)}</strong></a>`;
-  }).join('')}</div></section>`;
-}
-
-function flockCard(ctx) {
-  const {flock, cohorts, model, current, composition, settings} = ctx.derived;
-  if (!cohorts.length) {
-    return homeCard({title:t.flockAndUse, caption:html(t.addFlockForForecast), action:link(t.addCohort, 'cohort-form', 'tonal', 'plus')});
-  }
-  const lines = [html(hensRoosters(flock) +
-    (flock.young ? ', ' + t.orChicks(fmt.chicks(flock.young)) : ''))];
-  if (model.perBird != null) lines.push(html(t.perBirdDaily(fmt.number(model.perBird, 0), fmt.number(model.daily / 1000, 1))));
-  lines.push(html(model.fromHistory ? t.fromHistory : t.fromSettings));
-  if (current && composition) {
-    const cost = mixtureCost([...composition.items, ...composition.additives]);
-    if (cost.kind === 'full' && model.daily > 0) lines.push(html(t.costMonth(fmt.money(model.daily / 1000 * cost.perKg * 30))));
-  }
-  return homeCard({title:t.flockAndUse, value:html(fmt.birds(flock.total)), route:'flock', caption:lines.join('<br>')});
+    return `<a class="supply-row${low ? ' supply-row--low' : ''}" href="#ingredient/${html(ingredient.id)}">
+      <span class="grow">${html(ingredient.name)}</span><strong>${low ? icon('warn') : ''}${html(fmt.days(outlook.days))}</strong></a>`;
+  }).join('')}</section>`;
 }
 
 export function start(ctx) {
@@ -161,9 +205,12 @@ export function start(ctx) {
   const {settings} = derived;
   const last = settings.lastExport;
   const due = daysBetween(last ?? settings.createdAt.slice(0, 10), today) > 30;
+  const tiles = [flockTile(ctx), useTile(ctx), ...derived.rearing.map(cohort => rearingTile(cohort, ctx)), costTile(ctx)].filter(Boolean);
   return {title:t.appName, subtitle:fmt.headingDate(today), body:`<div class="stack">
-    ${nextMixCard(ctx)}${runningOutCard(ctx)}${rearingCards(ctx)}${flockCard(ctx)}
-    ${due ? banner(t.backupTitle, last ? t.backupDue : t.backupNever, button(t.makeBackup, 'backup', 'tonal', 'share')) : ''}</div>`,
+    ${nextMixHero(ctx)}${needsStrip(ctx)}
+    <div class="tiles">${tiles.join('')}</div>
+    ${suppliesCard(ctx)}
+    ${due ? strip({title:t.backupShort, line:last ? t.backupDue : t.backupNever, action:'backup', label:t.makeBackup, tone:'info'}) : ''}</div>`,
     action(action) { if (action === 'backup') return ctx.exportBackup(true); }};
 }
 
@@ -401,22 +448,12 @@ function rearingSummary(cohort, ctx) {
     const state = incubation(cohort, ctx.today);
     const value = state.day > 22 ? t.overdue : state.early ? t.canHatch : t.hatchIn(t.approx + ' ' + fmt.days(state.left));
     return {title:t.incubation, value, low:state.day > 22,
-      sub:[t.incubationDay(fmt.number(state.day)), fmt.eggs(state.eggsLeft)].join(' · '),
-      caption:t.hatchDue(fmt.listDate(state.due, ctx.today)), count:''};
+      sub:[t.incubationDay(fmt.number(state.day)), fmt.eggs(state.eggsLeft)].join(' · '), count:''};
   }
   const count = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
   const feedText = cohort.rearing.feedFrom ? t.feedOwnShort : t.feedBoughtShort;
   return {title:t.chicks, value:fmt.chicks(count), count:t.pieces(fmt.number(count)),
-    sub:[t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))), feedText].join(' · '),
-    caption:[t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))), feedText].join(' · ')};
-}
-
-export function rearingCards(ctx) {
-  return ctx.derived.rearing.map(cohort => {
-    const info = rearingSummary(cohort, ctx);
-    return homeCard({title:info.title, value:html(info.value), low:info.low,
-      caption:html(cohort.name + ' · ' + info.caption), route:'cohort/' + cohort.id});
-  }).join('');
+    sub:[t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))), feedText].join(' · ')};
 }
 
 export function flockView(ctx) {

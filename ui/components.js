@@ -39,16 +39,29 @@ export function forecast(value, threshold, today, unit = '', compact = false) {
     ${bar}</span>`;
 }
 
-export const banner = (title, description, action = '') =>
-  `<aside class="banner">${icon('warn')}<div class="grow stack tight"><h2>${html(title)}</h2>
-    <p>${html(description)}</p>${action ? '<div>' + action + '</div>' : ''}</div></aside>`;
+// Liczba z jednostką: „23 dni” → duża liczba i mniejsza jednostka. Tekst bez liczby zostaje w całości.
+export function figure(text, unit = '') {
+  const value = String(text);
+  if (!unit) {
+    const split = value.lastIndexOf(' ');
+    if (split > 0 && /\d/.test(value.slice(0, split))) return figure(value.slice(0, split), value.slice(split + 1));
+  }
+  return html(value) + (unit ? '<span class="unit">' + html(unit) + '</span>' : '');
+}
 
-// Karta ekranu Start: tytuł, duża liczba, jedna linijka podpisu. Cała karta prowadzi dalej.
-export function homeCard({title, value, caption = '', route = '', action = '', low = false}) {
-  const content = `<h2>${html(title)}</h2>${value ? `<p class="display${low ? ' display--low' : ''}">${low ? icon('warn') : ''}${value}</p>` : ''}
-    ${caption ? '<p class="muted">' + caption + '</p>' : ''}${action ? '<div>' + action + '</div>' : ''}`;
-  return route ? `<a class="card home-card stack tight" href="#${html(route)}">${content}</a>`
-    : `<section class="card home-card stack tight">${content}</section>`;
+// Pasek ostrzeżenia: pogrubiony tytuł, jedna linijka, odnośnik albo przycisk po prawej.
+export function strip({title, line = '', route = '', label = '', action = '', tone = 'warn'}) {
+  const end = action ? button(label, action, 'text') : label ? `<span class="strip-link">${html(label)}</span>` : '';
+  const content = `<span class="grow"><strong>${html(title)}</strong>${line ? '<span>' + html(line) + '</span>' : ''}</span>${end}`;
+  return route && !action ? `<a class="strip strip--${tone}" href="#${html(route)}">${content}</a>`
+    : `<aside class="strip strip--${tone}">${content}</aside>`;
+}
+
+// Kafelek: etykieta, duża liczba, krótki podpis. Cały kafelek prowadzi dalej.
+export function tile({label, value, caption = '', route = '', low = false}) {
+  const content = `<span class="tile-label">${html(label)}</span>
+    <span class="tile-value${low ? ' tile-value--low' : ''}">${value}</span>${caption ? '<span class="tile-caption">' + html(caption) + '</span>' : ''}`;
+  return route ? `<a class="tile" href="#${html(route)}">${content}</a>` : `<div class="tile">${content}</div>`;
 }
 
 // Dwa lub trzy przyciski wyboru (jak przełącznik). Pod spodem zwykłe pola radio.

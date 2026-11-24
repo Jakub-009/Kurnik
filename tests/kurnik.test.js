@@ -311,9 +311,10 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
   let screen = start(ctxOf(data));
   assert.equal(screen.floating, undefined);
   assert.doesNotMatch(screen.body, /Magazyn w skrócie|Wpisz, ile masz</);
-  assert.match(screen.body, /Wpisz stany/);
+  assert.match(screen.body, /Nie wszystkie stany są wpisane/);
   assert.match(screen.body, /Dodaj ptaki/);
   assert.match(screen.body, /Brak mieszanki w użyciu/);
+  assert.match(screen.body, /href="#mix"/);
   assert.doesNotMatch(screen.body, /0 ptaków/);
 
   const now = '2026-11-23';
@@ -325,13 +326,14 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
     record({name:'Koguty', date:'2026-01-01', dateKind:'hatch', weeks:null, hens:0, roosters:4, rearing:null, mark:'', notes:''}));
   screen = start(ctxOf(data, now));
   // 30 ptaków × 120 g = 3,6 kg dziennie; 8,5 dnia karmienia → zostało 50 − 30,6 = 19,4 kg; 19,4 / 3,6 ≈ 5 dni.
-  assert.match(screen.body, /Kiedy mieszać następną partię[\s\S]*za ok. 5 dni/);
-  assert.match(screen.body, /Zostało około 19,4\u00a0kg/);
-  assert.match(screen.body, /Na następną partię \(50 kg\) brakuje: Śruta sojowa 6 kg/);
-  assert.match(screen.body, /Najszybciej skończy się[\s\S]*Śruta sojowa[\s\S]*dokup około/);
-  assert.equal((screen.body.match(/class="mini-row/g) ?? []).length, 3);
-  assert.match(screen.body, /30 ptaków[\s\S]*26 kur, 4 koguty[\s\S]*około 120 g na ptaka dziennie, razem 3,6 kg/);
-  assert.match(screen.body, /Wartość z Ustawień/);
+  assert.match(screen.body, /Następne mieszanie[\s\S]*≈<\/span>5<span class="unit">dni/);
+  assert.match(screen.body, /zostało <b>19 kg<\/b>/);
+  assert.doesNotMatch(screen.body, /około|ok\./);
+  assert.match(screen.body, /Brakuje na 50 kg[\s\S]*Śruta sojowa 6 kg/);
+  assert.match(screen.body, /Zapasy[\s\S]*Śruta sojowa/);
+  assert.equal((screen.body.match(/class="supply-row/g) ?? []).length, 3);
+  assert.match(screen.body, /Stado[\s\S]*>30<[\s\S]*26 kur · 4 koguty/);
+  assert.match(screen.body, /Zużycie dziennie[\s\S]*3,6<span class="unit">kg[\s\S]*120 g na ptaka · wg Ustawień/);
   assert.doesNotMatch(screen.body, /Zrób kopię/);
   data.settings[0].lastExport = '2026-09-01';
   assert.match(start(ctxOf(data, now)).body, /Zrób kopię/);
@@ -468,7 +470,7 @@ test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do 
   assert.equal(inc.eggsLeft, 15);
   assert.equal(inc.early, true);
   assert.equal(incubation(hatch, '2026-04-10').left, 12);
-  assert.match(start(ctxOf(data, '2026-04-10')).body, /Inkubacja<\/h2>[\s\S]*Klucie za ok. 12 dni[\s\S]*Klucie 2026 · 21\. dzień/);
+  assert.match(start(ctxOf(data, '2026-04-10')).body, /Inkubacja: Klucie 2026[\s\S]*12<span class="unit">dni[\s\S]*do klucia · dzień 10 z 21/);
   assert.match(flockView(ctxOf(data, '2026-04-10')).body, /Inkubacja i pisklęta[\s\S]*10\. dzień z 21 · 15 jaj/);
   // Wyklucie 21.04: 12 piskląt. Pisklęta na paszy kupnej nie liczą się do mieszanki.
   Object.assign(hatch, {date:'2026-04-21', rearing:{...hatch.rearing, hatched:12, chicks:12}});

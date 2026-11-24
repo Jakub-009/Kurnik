@@ -8,6 +8,8 @@ const dateFormats = {
   full: new Intl.DateTimeFormat(locale, {day:'2-digit', month:'2-digit', year:'numeric', timeZone:'UTC'}),
   heading: new Intl.DateTimeFormat(locale, {weekday:'long', month:'long', day:'numeric', timeZone:'UTC'}),
   month: new Intl.DateTimeFormat(locale, {month:'2-digit', year:'2-digit', timeZone:'UTC'}),
+  day: new Intl.DateTimeFormat(locale, {day:'numeric', month:'short', timeZone:'UTC'}),
+  dayYear: new Intl.DateTimeFormat(locale, {day:'numeric', month:'short', year:'numeric', timeZone:'UTC'}),
 };
 const moneyFormat = new Intl.NumberFormat(locale, {style:'currency', currency:'PLN', useGrouping:'always'});
 
@@ -47,6 +49,10 @@ export const headingDate = value => dateFormats.heading.format(new Date(value));
 export const fullDate = value => dateFormats.full.format(new Date(value));
 export const listDate = (value, today) => (value.slice(0, 4) === today.slice(0, 4)
   ? dateFormats.short : dateFormats.full).format(new Date(value));
+
+// Krótka data: „17 gru”, z rokiem tylko gdy inny niż bieżący.
+export const shortDate = (value, today) => (value.slice(0, 4) === today.slice(0, 4)
+  ? dateFormats.day : dateFormats.dayYear).format(new Date(value));
 
 export function counted(value, forms) {
   const integer = Math.round(value);

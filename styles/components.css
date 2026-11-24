@@ -22,13 +22,9 @@
   background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);
   box-shadow: var(--md-sys-elevation);
 }
-.card, .banner { padding: 16px; border-radius: var(--md-sys-shape-corner-large); background: var(--md-sys-color-surface-container-low); }
+.card { padding: 16px; border-radius: var(--md-sys-shape-corner-large); background: var(--md-sys-color-surface-container-low); box-shadow: var(--card-shadow); }
 .card--strong { background: var(--md-sys-color-surface-container); }
-.banner { display: flex; gap: 12px; align-items: flex-start; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
-.banner .icon { color: var(--md-sys-color-tertiary); }
-.banner p { margin: 0; }
-.banner .button { margin-inline-start: -12px; }
-.list { background: var(--md-sys-color-surface-container-low); border-radius: var(--md-sys-shape-corner-large); overflow: clip; }
+.list { background: var(--md-sys-color-surface-container-low); border-radius: var(--md-sys-shape-corner-large); overflow: clip; box-shadow: var(--card-shadow); }
 .list-row { width: 100%; min-height: 64px; padding: 8px 12px; display: flex; align-items: center; gap: 12px; text-align: left; color: inherit; background: transparent; border: 0; text-decoration: none; }
 .list-row + .list-row { border-top: 1px solid var(--md-sys-color-outline-variant); }
 .list-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
