@@ -38,10 +38,10 @@ test('T1 – receptura z olejem jako dodatkiem: 49,5 kg, pszenica 34,3%, olej 2,
   const [oil] = composition.additives;
   assert.equal(fmt.precise(oil.amount / 1000 * 100000 / composition.mass, 'l'), '2,02 l');
   const body = recipeView(ctxOf(data), recipe.id).body;
-  assert.match(body, />49,5 kg</);
-  assert.match(body, /Dodatek<\/span> 2,02 l na 100 kg/);
-  assert.match(body, /34,3% · 34,34 kg na 100 kg/);
-  assert.match(feed(ctxOf(data)).body, /<span class="list-value">49,5 kg<\/span>/);
+  assert.match(body, /Skład na 100 kg/);
+  assert.match(body, /dodatek<\/small>[\s\S]*2,02 l/);
+  assert.match(body, /34,3%<\/small>[\s\S]*34,34 kg/);
+  assert.match(feed(ctxOf(data)).body, /7 składników/);
 });
 
 test('T2 – litry bez gęstości są odrzucane', () => {
@@ -175,9 +175,10 @@ test('T17 – zmiana liczby: 30 szt., ubyło 1, przybyło 5 → 34 szt.', () => 
     record({cohortId:cohort.id, type:'add', date:'2026-11-01', count:5, notes:'dokupione', order:2}));
   assert.equal(cohortCount(cohort, data.cohortChanges, today), 34);
   const body = cohortView(ctxOf(data), cohort.id).body;
-  assert.match(body, /padła[\s\S]*−1|−1[\s\S]*padła/);
-  assert.match(body, /dokupione[\s\S]*\+5|\+5[\s\S]*dokupione/);
-  assert.match(body, />34 ptaki</);
+  assert.match(body, /padła[\s\S]*−1 kura/);
+  assert.match(body, /dokupione[\s\S]*\+5 kur/);
+  assert.match(body, />34<span class="unit">szt\./);
+  assert.match(body, /href="#change\/[^"]+\/loss"[\s\S]*href="#change\/[^"]+\/add"/);
   assert.equal(validCohortHistory(cohort, [...data.cohortChanges, record({cohortId:cohort.id, type:'loss', date:today, count:35})]), false);
 });
 
@@ -226,7 +227,7 @@ test('T19 – migracja dodatków: stary „Olej” (oil: true) staje się dodatk
   assert.equal(batchBaseMass(restored.batches[0]), 50000);
   near(batchResult(restored.batches[0]).consumed, 50000);
   const body = batchView(ctxOf(restored), oldBatch.id).body;
-  assert.match(body, /50 kg \+ 1,3 l oleju/);
+  assert.match(body, /<b>50 kg<\/b>[\s\S]*\+ 1,3 l oleju/);
   assert.match(body, /1,25 l/);
 });
 
@@ -312,7 +313,7 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
   assert.equal(screen.floating, undefined);
   assert.doesNotMatch(screen.body, /Magazyn w skrócie|Wpisz, ile masz</);
   assert.match(screen.body, /Nie wszystkie stany są wpisane/);
-  assert.match(screen.body, /Dodaj ptaki/);
+  assert.match(screen.body, /Dodaj rocznik/);
   assert.match(screen.body, /Brak mieszanki w użyciu/);
   assert.match(screen.body, /href="#mix"/);
   assert.doesNotMatch(screen.body, /0 ptaków/);
@@ -358,7 +359,7 @@ test('zużycie na ptaka: uczy się z partii, a ubytek w połowie partii zmienia 
   derived = derive(data, '2026-11-23');
   near(derived.daily, 2200);
   near(derived.active.remaining, 50000 - 5 * 3300 - 3.5 * 2200);
-  assert.equal(feed(ctxOf(data, '2026-11-23')).body.includes('Zużycie: 2,2 kg dziennie (20 szt. × 110 g)'), true);
+  assert.match(feed(ctxOf(data, '2026-11-23')).body, /Zużycie dziennie[\s\S]*2,2<span class="unit">kg[\s\S]*20 szt\. × 110 g/);
 });
 
 test('bez stada prognoza liczy kg dziennie, dziś jako pół dnia; rocznik z późniejszą datą nie zeruje przeszłości', () => {
@@ -368,7 +369,10 @@ test('bez stada prognoza liczy kg dziennie, dziś jako pół dnia; rocznik z pó
   let derived = derive(data, '2026-11-23');
   assert.equal(derived.model.perBird, null);
   near(derived.active.remaining, 50000 - 8.5 * 3700);
-  assert.match(feed(ctxOf(data, '2026-11-23')).body, /Zostało około 18,6\u00a0kg[\s\S]*9\. dzień karmienia[\s\S]*Zużycie: 3,7 kg dziennie/);
+  const body = feed(ctxOf(data, '2026-11-23')).body;
+  assert.match(body, /W użyciu · P[\s\S]*19<span class="unit">kg<\/span><span class="of">z 50 kg[\s\S]*dzień <b>9<\/b>/);
+  assert.match(body, /3,7<span class="unit">kg[\s\S]*wg Ustawień/);
+  assert.doesNotMatch(body, /około|ok\./);
   data.cohorts.push(record({name:'Kury', date:'2026-11-23', dateKind:'purchase', weeks:null, hens:25, roosters:0, rearing:null, mark:'', notes:''}));
   derived = derive(data, '2026-11-23');
   near(derived.active.remaining, 50000 - 8.5 * 25 * 120);
@@ -378,12 +382,13 @@ test('Magazyn: karta „Wpisz stany” przy pierwszym uruchomieniu, potem „Wpi
   const {data, ingredients} = fixture();
   let body = warehouse(ctxOf(data)).body;
   assert.match(body, /Wpisz stany/);
-  assert.doesNotMatch(body, /Wpisz, ile masz</);
   data.ingredientEvents.push(record({ingredientId:ingredients[0].id, type:'purchase', grams:25000, date:today}));
   body = warehouse(ctxOf(data)).body;
   assert.doesNotMatch(body, /Wpisz stany/);
-  assert.match(body, /Wpisz, ile masz/);
-  assert.doesNotMatch(body, /class="list-icon"/);
+  assert.match(body, /wpisz stan/);
+  assert.match(body, /<span class="s-val">25 kg<\/span>/);
+  assert.match(warehouse(ctxOf(data)).floating, /Dodaj na stan/);
+  assert.doesNotMatch(body, /około|ok\./);
 });
 
 test('ekran składnika: 22,5 kg po zużyciu 2,5 kg z 25 kg, „Ile dokupić” i podgląd ruchów', () => {
@@ -397,9 +402,11 @@ test('ekran składnika: 22,5 kg po zużyciu 2,5 kg z 25 kg, „Ile dokupić” i
   const usage = data.ingredientEvents.find(event => event.batchId === batch.id);
   const ctx = ctxOf(data);
   const page = ingredientView(ctx, ingredient.id);
-  assert.match(page.body, /<p class="display">22,5 kg<\/p>/);
-  assert.match(page.body, /Powinno być/);
-  assert.match(page.body, /Ile dokupić[\s\S]*Na 2 miesiące dokup[\s\S]*kg/);
+  // Na listach i w karcie stan w pełnych kg (22,5 → 23), dokładny stan jest w szczegółach ruchu.
+  assert.match(page.body, /Stan[\s\S]*23<span class="unit">kg/);
+  assert.match(page.body, /Potrzeba na 2 mies\.[\s\S]*kg/);
+  assert.match(page.body, /Zakup[\s\S]*2,00\szł\/kg · Dostawa[\s\S]*\+25 kg/);
+  assert.match(page.body, /Zużyte w partii[\s\S]*−2,5 kg/);
   assert.ok(page.body.includes('#movement-detail/' + usage.id));
   const purchased = movementDetail(ctx, purchase.id);
   assert.match(purchased.body, /Zapłacono[\s\S]*50,00/);
@@ -407,16 +414,16 @@ test('ekran składnika: 22,5 kg po zużyciu 2,5 kg z 25 kg, „Ile dokupić” i
   assert.ok(consumed.body.includes('#batch/' + batch.id + '/' + usage.id));
 });
 
-test('„Zakończ i mieszaj nową”: partia z ostatnim dniem dziś nie jest już w użyciu', () => {
+test('zakończenie partii: partia z ostatnim dniem dziś nie jest już w użyciu', () => {
   const {data, recipe, ingredients} = fixture();
   const batch = record({mass:100000, massBasis:'base', date:'2026-11-01', start:'2026-11-01', end:null, remaining:null,
     recipeName:'Podstawowa', recipeId:recipe.id, items:[{ingredientId:ingredients[0].id, grams:100000}]});
   data.batches.push(batch);
   assert.equal(derive(data, today).active.batch.id, batch.id);
-  assert.match(feed(ctxOf(data)).body, /Zakończ i mieszaj nową/);
+  assert.match(feed(ctxOf(data)).body, /href="#finish\/[^"]+"[^>]*>Zakończ partię/);
   Object.assign(batch, {end:'2026-11-23', remaining:0});
   assert.equal(derive(data, today).active, undefined);
-  assert.match(batchView(ctxOf(data), batch.id).body, /Ostatni dzień karmienia[\s\S]*22\.11\.2026/);
+  assert.match(batchView(ctxOf(data), batch.id).body, /Zakończona · 01\.11 – 22\.11[\s\S]*22<span class="unit">dni/);
   near(derive(data, today).daily, 100000 / 22);
 });
 
@@ -426,9 +433,9 @@ test('wykres zużycia pojawia się od 3 zakończonych partii, najwyżej 12', () 
     start:`2025-${String(i).padStart(2, '0')}-01`, end:`2025-${String(i).padStart(2, '0')}-25`, remaining:0,
     recipeName:'P', recipeId:recipe.id, items:[]}));
   add(1); add(2);
-  assert.doesNotMatch(feed(ctxOf(data)).body, /<svg class="chart"/);
+  assert.doesNotMatch(feed(ctxOf(data)).body, /class="bars"/);
   add(3);
-  assert.match(feed(ctxOf(data)).body, /<svg class="chart"[\s\S]*Zużycie dziennie w kolejnych partiach|Zużycie dziennie w kolejnych partiach[\s\S]*<svg class="chart"/);
+  assert.match(feed(ctxOf(data)).body, /Zużycie dziennie w kolejnych partiach[\s\S]*class="bars"/);
   for (let i = 4; i <= 12; i++) add(i);
   data.batches.push(record({mass:100000, massBasis:'base', date:'2024-01-01', start:'2024-01-01', end:'2024-01-20',
     remaining:0, recipeName:'P', recipeId:recipe.id, items:[]}));
@@ -453,7 +460,10 @@ test('rocznik z kurami i kogutami razem: 8 kur i 2 koguty, ubył 1 kogut', () =>
   data.cohortChanges.push(record({cohortId:cohort.id, type:'loss', sex:'roosters', date:'2026-10-01', count:1, notes:'ubój', order:1}));
   assert.deepEqual(cohortCounts(cohort, data.cohortChanges, today), {hens:8, roosters:1, young:0});
   assert.equal(flockCount(data.cohorts, data.cohortChanges, today).total, 9);
-  assert.match(flockView(ctxOf(data)).body, /9 ptaków[\s\S]*8 kur, 1 kogut/);
+  const body = flockView(ctxOf(data)).body;
+  assert.match(body, /W kurniku[\s\S]*9<span class="unit">szt\.[\s\S]*<b>8<\/b> kur[\s\S]*<b>1<\/b> kogut/);
+  assert.match(body, /Zakup 2026[\s\S]*8 kur · 1 kogut/);
+  assert.doesNotMatch(body, /ptak|Stado/);
   assert.equal(validCohortHistory(cohort, [...data.cohortChanges,
     record({cohortId:cohort.id, type:'loss', sex:'roosters', date:today, count:2})]), false);
 });
@@ -471,7 +481,8 @@ test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do 
   assert.equal(inc.early, true);
   assert.equal(incubation(hatch, '2026-04-10').left, 12);
   assert.match(start(ctxOf(data, '2026-04-10')).body, /Inkubacja: Klucie 2026[\s\S]*12<span class="unit">dni[\s\S]*do klucia · dzień 10 z 21/);
-  assert.match(flockView(ctxOf(data, '2026-04-10')).body, /Inkubacja i pisklęta[\s\S]*10\. dzień z 21 · 15 jaj/);
+  assert.match(flockView(ctxOf(data, '2026-04-10')).body, /Inkubacja: Klucie 2026[\s\S]*dzień 10 z 21 · 15 jaj/);
+  assert.match(cohortView(ctxOf(data, '2026-04-10'), hatch.id).body, /Do klucia[\s\S]*12<span class="unit">dni[\s\S]*3 niezalężone · 2 obumarłe/);
   // Wyklucie 21.04: 12 piskląt. Pisklęta na paszy kupnej nie liczą się do mieszanki.
   Object.assign(hatch, {date:'2026-04-21', rearing:{...hatch.rearing, hatched:12, chicks:12}});
   assert.deepEqual(hatchRate(hatch.rearing), {ofSet:.6, ofFertile:12 / 17});
@@ -482,7 +493,7 @@ test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do 
   hatch.rearing.feedFrom = '2026-06-15';
   model = feedModel({batches:data.batches, cohorts:data.cohorts, changes:data.cohortChanges, settings:data.settings[0], today:'2026-06-20'});
   assert.equal(model.birds, 30);
-  assert.match(cohortView(ctxOf(data, '2026-06-20'), hatch.id).body, /10 szt\.[\s\S]*8 tyg\.[\s\S]*Twoja mieszanka od 15\.06\.2026/);
+  assert.match(cohortView(ctxOf(data, '2026-06-20'), hatch.id).body, /10<span class="unit">szt\.[\s\S]*<b>8<\/b> tyg\.[\s\S]*mieszanka od <b>15\.06<\/b>[\s\S]*12 z 20 jaj \(60%\)/);
   // Przeniesienie 20.08: 6 kur i 4 koguty.
   Object.assign(hatch, {joined:'2026-08-20', hens:6, roosters:4});
   assert.equal(validCohortHistory(hatch, data.cohortChanges), true);
@@ -491,7 +502,7 @@ test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do 
   assert.equal(flockCount(data.cohorts, data.cohortChanges, '2026-08-25').total, 30);
   assert.equal(derive(data, '2026-08-25').rearing.length, 0);
   const body = cohortView(ctxOf(data, '2026-08-25'), hatch.id).body;
-  assert.match(body, /10 ptaków[\s\S]*6 kur, 4 koguty[\s\S]*Z inkubacji[\s\S]*20 jaj, wykluło się 12/);
+  assert.match(body, /W roczniku[\s\S]*10<span class="unit">szt\.[\s\S]*<b>6<\/b> kur[\s\S]*<b>4<\/b> koguty[\s\S]*w kurniku od 20\.08 · 12 z 20 jaj/);
   const restored = decodeBackup(encodeBackup(data, today));
   assert.deepEqual(restored.cohorts, data.cohorts);
   assert.equal(JSON.parse(encodeBackup(data, today)).version, 5);

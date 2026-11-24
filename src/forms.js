@@ -874,8 +874,13 @@ export function transferForm(ctx, id) {
 
 export function changeForm(ctx, id, changeId) {
   const cohort = get(ctx, 'cohorts', id);
+  // „change/id/loss” i „change/id/add” otwierają nowy wpis z wybranym kierunkiem (przyciski Ubyło / Przybyło).
   // Stare adresy miały rodzaj zdarzenia przed identyfikatorem.
-  if (['add', 'loss', 'correction', 'status'].includes(changeId)) changeId = arguments[3];
+  let preset = 'loss';
+  if (['add', 'loss', 'correction', 'status'].includes(changeId)) {
+    if (changeId === 'add') preset = 'add';
+    changeId = arguments[3];
+  }
   const old = changeId ? get(ctx, 'cohortChanges', changeId) : null;
   if (!cohort || cohortStage(cohort) === 'incubation' ||
     (changeId && (!old || old.cohortId !== id || !['add', 'loss'].includes(flockEventKind(old))))) return missing('flock');
@@ -885,7 +890,7 @@ export function changeForm(ctx, id, changeId) {
   const others = history.filter(event => event.id !== changeId);
   const minDate = young ? cohort.date : cohort.joined ?? cohort.date;
   return {title:t.changeCount, subtitle:cohort.name, parent, form:true,
-    body:form(`${choice('direction', t.lessOrMore, [['loss', t.less], ['add', t.more]], old?.type ?? 'loss')}
+    body:form(`${choice('direction', t.lessOrMore, [['loss', t.less], ['add', t.more]], old?.type ?? preset)}
       ${young ? '' : choice('sex', t.whichBirds, [['hens', t.hens], ['roosters', t.roosters]], old?.sex ?? 'hens')}
       ${numberField('count', t.howMany, asInput(old?.count), t.pcs, 'numeric')}
       ${dateInput(ctx, 'date', t.date, old?.date, minDate)}

@@ -20,25 +20,6 @@ export const textLink = (label, route, symbol = '') => link(label, route, 'text'
 export const fab = (label, route, symbol) =>
   `<a class="fab" href="#${html(route)}">${icon(symbol)}${html(label)}</a>`;
 
-export function row({name, sub = '', value = '', symbol = '', route = '', action = ''}) {
-  const content = `${symbol ? '<span class="list-icon">' + icon(symbol) + '</span>' : ''}
-    <span class="list-content"><span>${html(name)}</span>${sub ? '<small>' + sub + '</small>' : ''}</span>
-    ${value ? '<span class="list-value">' + value + '</span>' : ''}
-    ${route || action ? icon('next') : ''}`;
-  if (route) return `<a class="list-row" href="#${html(route)}">${content}</a>`;
-  if (action) return `<button class="list-row" type="button" data-action="${html(action)}">${content}</button>`;
-  return `<div class="list-row">${content}</div>`;
-}
-
-export function forecast(value, threshold, today, unit = '', compact = false) {
-  if (!value) return compact ? '' : '<small>' + html(t.notInRecipe) + '</small>';
-  const low = value.days < threshold;
-  const bar = `<progress class="forecast-track" aria-hidden="true" value="${Math.min(value.days, threshold)}" max="${threshold}"></progress>`;
-  return `<span class="forecast ${low ? 'forecast--low' : ''}">
-    <span class="forecast-line"><strong>${low ? icon('warn') + ' ' : ''}${t.approx} ${fmt.days(value.days)}</strong><span>${html(t.runsOutAround(fmt.listDate(value.date, today)))}</span></span>
-    ${bar}</span>`;
-}
-
 // Liczba z jednostką: „23 dni” → duża liczba i mniejsza jednostka. Tekst bez liczby zostaje w całości.
 export function figure(text, unit = '') {
   const value = String(text);
@@ -57,6 +38,39 @@ export function strip({title, line = '', route = '', label = '', action = '', to
     : `<aside class="strip strip--${tone}">${content}</aside>`;
 }
 
+// Linijka z boku karty głównej: „do <b>15 gru</b>”, „<b>31</b> kur”. Tekst przed i po pogrubieniu jest zwykły.
+export const side = (before, bold, after = '') =>
+  `<span>${before ? html(before) + ' ' : ''}<b>${html(bold)}</b>${after ? ' ' + html(after) : ''}</span>`;
+
+// „31 kur” → <b>31</b> kur
+export const sideCount = text => {
+  const split = String(text).lastIndexOf(' ');
+  return split > 0 ? side('', text.slice(0, split), text.slice(split + 1)) : side('', text);
+};
+
+// Karta główna ekranu: etykieta, duża liczba, linijki z boku, pasek, krótki podpis, przyciski pod spodem.
+export function hero({label, value, sides = [], bar = null, caption = '', low = false, route = '', after = ''}) {
+  const inner = `<span class="hero-top"><span><span class="hero-label">${html(label)}</span><span class="hero-value">${value}</span></span>
+      ${sides.length ? '<span class="hero-side">' + sides.join('') + '</span>' : ''}</span>
+    ${bar ? `<progress class="hero-bar" aria-hidden="true" value="${Math.max(0, bar[0])}" max="${bar[1]}"></progress>` : ''}
+    ${caption ? '<span class="hero-caption">' + html(caption) + '</span>' : ''}`;
+  return `<section class="hero${low ? ' hero--low' : ''}">${route ? `<a class="hero-link" href="#${html(route)}">${inner}</a>`
+    : `<div class="hero-link">${inner}</div>`}${after}</section>`;
+}
+
+// Biała karta z listą: tytuł, opcjonalny odnośnik po prawej, wiersze.
+export const listCard = (title, rows, action = '') =>
+  `<section class="list"><div class="list-head"><h2 class="list-title">${html(title)}</h2>${action}</div>${rows}</section>`;
+
+export const headLink = (label, route) => `<a class="mini-link" href="#${html(route)}">${icon('plus')}${html(label)}</a>`;
+
+// Wiersz listy: tytuł, szary podpis, wartość po prawej. `sub` i `value` to gotowy HTML.
+export function line({title, sub = '', value = '', route = '', strong = true, plus = false, after = ''}) {
+  const content = `<span class="grow"><b${strong ? '' : ' class="plain"'}>${html(title)}</b>${sub ? '<small>' + sub + '</small>' : ''}</span>
+    ${after}${value ? `<span class="r-val${plus ? ' plus' : ''}">${value}</span>` : ''}${route ? icon('next') : ''}`;
+  return route ? `<a class="r-row" href="#${html(route)}">${content}</a>` : `<div class="r-row">${content}</div>`;
+}
+
 // Kafelek: etykieta, duża liczba, krótki podpis. Cały kafelek prowadzi dalej.
 export function tile({label, value, caption = '', route = '', low = false}) {
   const content = `<span class="tile-label">${html(label)}</span>
@@ -71,7 +85,6 @@ export const choice = (name, legend, options, value) =>
 
 export const chosen = name => document.querySelector('input[name="' + name + '"]:checked')?.value;
 
-export const warning = label => `<span class="warning">${icon('warn')} ${html(label)}</span>`;
 export const empty = (message, action = '') => `<div class="card stack tight"><p>${html(message)}</p>${action ? '<div>' + action + '</div>' : ''}</div>`;
 
 export const details = values => `<dl class="detail-grid">${values.map(([title, value]) =>

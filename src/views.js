@@ -1,78 +1,60 @@
-import {addDays, batchAdditives, batchBaseMass, batchOil, cohortAge, cohortCount, cohortCounts, cohortEvents, cohortStage, dailyHistory,
-  dateOf, dayNumber, daysBetween, flockEventKind, hatchRate, incubation, isAdditive, weeksOld, lastBatchMass, mixtureCost, nowPoint, purchaseNeed, recipeComposition, roundPurchase,
-  savings, scaleBatch} from './calc/index.js';
+import {addDays, batchAdditives, batchBaseMass, batchOil, batchResult, cohortAge, cohortCounts, cohortEvents, cohortStage, dailyHistory,
+  dateOf, dayNumber, daysBetween, flockEventKind, hatchRate, incubation, isAdditive, weeksOld, lastBatchMass, mixtureCost, nowPoint, purchaseNeed,
+  recipeComposition, roundPurchase, savings, scaleBatch} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, isFinished, latestFirst, showAmount} from './model.js';
-import {button, details, empty, fab, figure, forecast, html, link, row, strip, textLink, tile, warning} from '../ui/components.js';
+import {button, details, empty, fab, figure, headLink, hero, html, line, link, listCard, side, sideCount, strip, textLink, tile} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 import {t} from '../ui/texts.js';
 
+// Zasady ekranów: etykieta, liczba, krótki podpis. Bez „około” – prognozę oznacza tylko „≈” na Starcie.
+
 const symbol = {start:'home', feed:'sack', stock:'pallet', flock:'hen'};
-const approx = text => t.approx + ' ' + text;
 
 export function frame(screen, route) {
-  const {title, subtitle = '', parent, form = false, body, floating = ''} = screen;
+  const {title, subtitle = '', parent, form = false, body, floating = '', edit = ''} = screen;
   const root = route.split('/')[0];
   const main = !parent;
   const navigation = main ? `<nav class="navigation" aria-label="${t.mainNavigation}"><div class="tabs">${Object.entries(t.tabs)
     .map(([key, label]) => `<a href="#${key}"${root === key ? ' aria-current="page"' : ''}><span>${icon(symbol[key])}</span><span>${label}</span></a>`).join('')}</div></nav>` : '';
+  const end = main ? `<a class="icon-button" aria-label="${t.settings}" href="#settings/${root}">${icon('settings')}</a>`
+    : edit ? `<a class="icon-button" aria-label="${t.edit}" href="#${html(edit)}">${icon('edit')}</a>` : '';
   return `<header class="app-bar">${parent ? `<button class="icon-button" type="button" data-action="back"
     aria-label="${form ? t.close : t.back}">${icon(form ? 'close' : 'back')}</button>` : ''}
     <div class="app-bar-text"><h1 tabindex="-1">${html(title)}</h1>${subtitle ? '<p class="eyebrow">' + html(subtitle) + '</p>' : ''}</div>
-    ${main ? `<a class="icon-button" aria-label="${t.settings}" href="#settings/${root}">${icon('settings')}</a>` : ''}</header>
+    ${end}</header>
     <main class="page ${main ? 'page--main' : ''} ${form ? 'page--form' : ''}" id="content">${body}</main>${floating}${navigation}`;
 }
 
+// Dokładny stan (szczegóły ruchu) i stan do list (pełne kg, poniżej 10 jedno miejsce po przecinku).
 const quantity = (grams, ingredient, signed = false) =>
   fmt.stockQuantity(showAmount(grams, ingredient), ingredient.unit, signed);
+const amount = (grams, ingredient) => fmt.quantity(showAmount(grams, ingredient), ingredient.unit);
+const signedAmount = (grams, ingredient) =>
+  (grams > 0 ? '+' : grams < 0 ? '−' : '') + fmt.quantity(Math.abs(showAmount(grams, ingredient)), ingredient.unit);
+const zloty = cents => fmt.number(Math.round(cents / 100));
+const perKg = cents => fmt.money(cents) + t.perKgSuffix;
 
 function firstUnknown(stocks) {
   return stocks.find(row => !row.known)?.ingredient;
 }
 
-function enterStocksCard(stocks) {
-  const first = firstUnknown(stocks);
-  return `<section class="card stack tight"><p>${t.enterStocksInfo}</p>
-    ${first ? '<div>' + link(t.enterStocks, 'movement/correction/' + first.id, 'tonal') + '</div>' : ''}</section>`;
-}
-
-function stockRows(ctx) {
-  const {stocks, settings} = ctx.derived;
-  const anyKnown = stocks.some(row => row.known);
-  return '<div class="list">' + stocks.map(({ingredient, grams, known, outlook}) => {
-    const notice = known && grams < 0 ? warning(t.checkStock) : outlook && outlook.days < settings.threshold ? warning(t.runningOut) : '';
-    const sub = [known ? '' : anyKnown ? html(t.enterAmount) : '', isAdditive(ingredient) ? html(t.additive) : '', notice]
-      .filter(Boolean).join(' · ');
-    const item = row({name:ingredient.name, route:'ingredient/' + ingredient.id, sub,
-      value: known ? `<strong class="stock-value">${quantity(grams, ingredient)}</strong>` : ''});
-    return item + (outlook ? '<div class="stock-projection">' + forecast(outlook, settings.threshold, ctx.today) + '</div>' : '');
-  }).join('') + '</div>';
-}
-
-function batchLabel(batch) {
+// „ + 2,2 l oleju” albo „ + dodatki”; pusto, gdy partia nie ma dodatków.
+function additivesLabel(batch) {
   const additives = batchAdditives(batch);
-  const base = fmt.mass(batchBaseMass(batch));
-  if (!additives.length) return base;
+  if (!additives.length) return '';
   const oil = batchOil(batch);
   if (additives.length === 1 && (oil || additives[0].unit === 'l')) {
     const item = oil ?? additives[0];
-    if (/^olej/iu.test(item.name)) return base + t.withOil(fmt.number(item.millilitres / 1000, 1) + ' l');
+    if (/^olej/iu.test(item.name)) return t.withOil(fmt.number(item.millilitres / 1000, 1) + ' l');
   }
-  return base + t.withAdditives;
+  return t.withAdditives;
 }
 
+const batchLabel = batch => fmt.mass(batchBaseMass(batch)) + additivesLabel(batch);
 const feedingDay = (batch, today) => Math.floor(nowPoint(today) - dayNumber(batch.start)) + 1;
-const kgText = grams => fmt.number(grams / 1000, 1) + '\u00a0kg';
-
-// Jak liczone jest zużycie: „34 × 115 g = 3,9 kg dziennie” albo „3,7 kg dziennie”.
-function basis(ctx) {
-  const {model} = ctx.derived;
-  const line = model.perBird != null
-    ? t.basisBirds(fmt.number(model.birds), fmt.number(model.perBird, 0), fmt.number(model.daily / 1000, 1))
-    : t.basisDaily(fmt.number(model.daily / 1000, 1));
-  return line + ' · ' + (model.fromHistory ? t.fromHistory : t.fromSettings);
-}
+const batchRange = (batch, today) => fmt.listDate(batch.start, today) + ' – ' + fmt.listDate(addDays(batch.end, -1), today);
 
 function runOut(ctx) {
   const {runsOutAt} = ctx.derived;
@@ -81,10 +63,7 @@ function runOut(ctx) {
   return {days, date:dateOf(runsOutAt)};
 }
 
-function otherOpen(ctx) {
-  const count = ctx.derived.openStatus.length - 1;
-  return count > 0 ? t.otherOpen(count) : '';
-}
+// ───────────── Start ─────────────
 
 // Czego brakuje na kolejną partię tej samej masy co ostatnia: {mass, missing:[tekst], unknown:[składnik]}.
 function nextBatchNeeds(ctx) {
@@ -111,25 +90,16 @@ function nextMixHero(ctx) {
   const {active, openStatus} = ctx.derived;
   const today = ctx.today;
   const mixButton = `<div class="hero-action">${link(t.mix, 'mix', 'filled', 'plus')}</div>`;
-  if (!active) {
-    return `<section class="hero"><span class="hero-label">${t.nextMix}</span>
-      <p class="hero-value">${figure(t.now)}</p><p class="hero-caption">${html(t.noMixInUse)}</p>${mixButton}</section>`;
-  }
+  if (!active) return hero({label:t.nextMix, value:figure(t.now), caption:t.noMixInUse, after:mixButton});
   const base = batchBaseMass(active.batch);
   const remaining = Math.max(0, active.remaining);
   const end = runOut(ctx);
   const gone = active.remaining <= 0;
   const value = gone ? figure(t.now) : !end ? '—' : end.days < .5 ? figure(t.today) : '<span class="approx">≈</span>' + figure(fmt.days(end.days));
-  const side = [end && !gone ? [t.until, fmt.shortDate(end.date, today)] : null, [t.left, fmt.mass(remaining)]]
-    .filter(Boolean).map(([label, text]) => `<span>${html(label)} <b>${html(text)}</b></span>`).join('');
-  const open = openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : '';
-  const caption = [gone ? t.mixGone : '', open].filter(Boolean).join(' · ');
+  const sides = [end && !gone ? side(t.until, fmt.shortDate(end.date, today)) : '', side(t.left, fmt.mass(remaining))].filter(Boolean);
+  const caption = [gone ? t.mixGone : '', openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : ''].filter(Boolean).join(' · ');
   const soon = gone || (end && end.days <= 3);
-  return `<section class="hero${gone ? ' hero--low' : ''}"><a class="hero-link" href="#feed">
-    <span class="hero-top"><span><span class="hero-label">${t.nextMix}</span><span class="hero-value">${value}</span></span>
-      <span class="hero-side">${side}</span></span>
-    <progress class="hero-bar" aria-hidden="true" value="${remaining}" max="${base}"></progress>
-    ${caption ? '<span class="hero-caption">' + html(caption) + '</span>' : ''}</a>${soon ? mixButton : ''}</section>`;
+  return hero({label:t.nextMix, value, sides, bar:[remaining, base], caption, low:gone, route:'feed', after:soon ? mixButton : ''});
 }
 
 // Pasek tylko wtedy, gdy czegoś brakuje na następną partię albo nie wszystko jest wpisane.
@@ -146,19 +116,29 @@ function needsStrip(ctx) {
   return '';
 }
 
+function flockParts(counts) {
+  return [counts.hens ? fmt.hens(counts.hens) : '', counts.roosters ? fmt.roosters(counts.roosters) : '',
+    counts.young ? fmt.chicks(counts.young) : ''].filter(Boolean);
+}
+
 function flockTile(ctx) {
   const {flock, cohorts} = ctx.derived;
   if (!cohorts.length) return tile({label:t.birdsTile, value:'—', caption:t.addBirdsShort, route:'cohort-form'});
-  const parts = [flock.hens ? fmt.hens(flock.hens) : '', flock.roosters ? fmt.roosters(flock.roosters) : '',
-    flock.young ? fmt.chicks(flock.young) : ''].filter(Boolean);
-  return tile({label:t.birdsTile, value:figure(fmt.number(flock.total), t.pcs), caption:parts.join(' · '), route:'flock'});
+  return tile({label:t.birdsTile, value:figure(fmt.number(flock.total), t.pcs), caption:flockParts(flock).join(' · '), route:'flock'});
 }
 
-function useTile(ctx) {
-  const {model} = ctx.derived;
-  const caption = [model.perBird != null ? t.perBirdShort(fmt.number(model.perBird, 0)) : '',
+// „36 szt. × 106 g”, a bez stada samo źródło liczby.
+function useBasis(model) {
+  return [model.perBird != null ? t.basisShort(fmt.number(model.birds), fmt.number(model.perBird, 0)) : '',
     model.fromHistory ? '' : t.fromSettingsShort].filter(Boolean).join(' · ');
-  return tile({label:t.dailyTile, value:figure(fmt.number(model.daily / 1000, 1), 'kg'), caption, route:'feed'});
+}
+
+function useTile(ctx, route = 'feed') {
+  const {model} = ctx.derived;
+  const caption = route === 'feed'
+    ? [model.perBird != null ? t.perBirdShort(fmt.number(model.perBird, 0)) : '', model.fromHistory ? '' : t.fromSettingsShort].filter(Boolean).join(' · ')
+    : useBasis(model);
+  return tile({label:t.dailyTile, value:figure(fmt.number(model.daily / 1000, 1), 'kg'), caption, route});
 }
 
 function costTile(ctx) {
@@ -166,29 +146,34 @@ function costTile(ctx) {
   if (!current || !composition || !(model.daily > 0)) return '';
   const cost = mixtureCost([...composition.items, ...composition.additives]);
   if (cost.kind !== 'full') return '';
-  const zloty = Math.round(model.daily / 1000 * cost.perKg * 30 / 100);
-  return tile({label:t.monthCost, value:figure(fmt.number(zloty), 'zł'), caption:t.fromPrices, route:'recipe/' + current.id});
+  return tile({label:t.monthCost, value:figure(zloty(model.daily / 1000 * cost.perKg * 30), 'zł'), caption:t.fromPrices,
+    route:'recipe/' + current.id});
 }
 
 // Inkubacja i pisklęta jako kafelki. „Inkubacja 2026” zostaje bez powtórzenia słowa.
 const stageLabel = (word, name) => name.toLowerCase().startsWith(word.toLowerCase()) ? name : word + ': ' + name;
 
+function hatchValue(state) {
+  const late = state.day > 22;
+  return {late, value:late ? figure(t.hatchLate) : state.early ? figure(t.hatching) : figure(fmt.days(state.left))};
+}
+
 function rearingTile(cohort, ctx) {
   const route = 'cohort/' + cohort.id;
   if (cohortStage(cohort) === 'incubation') {
     const state = incubation(cohort, ctx.today);
-    const late = state.day > 22;
-    const value = late ? figure(t.hatchLate) : state.early ? figure(t.hatching) : figure(fmt.days(state.left));
-    const caption = [late || state.early ? '' : t.toHatch, t.incubationDayShort(fmt.number(state.day))].filter(Boolean).join(' · ');
+    const {late, value} = hatchValue(state);
+    const caption = [late || state.early ? '' : t.toHatch, t.incubationDayShort(fmt.number(state.day)), fmt.eggs(state.eggsLeft)]
+      .filter(Boolean).join(' · ');
     return tile({label:stageLabel(t.incubation, cohort.name), value, caption, route, low:late});
   }
   const count = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
   const caption = [t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))),
     cohort.rearing.feedFrom ? t.feedOwnShort : t.feedBoughtShort].join(' · ');
-  return tile({label:stageLabel(t.chicks, cohort.name), value:figure(fmt.number(count)), caption, route});
+  return tile({label:stageLabel(t.chicks, cohort.name), value:figure(fmt.number(count), t.pcs), caption, route});
 }
 
-// Trzy składniki, które skończą się najszybciej. Same dni; ile dokupić jest w szczegółach składnika.
+// Trzy składniki, które skończą się najszybciej. Same dni; ile potrzeba jest w szczegółach składnika.
 function suppliesCard(ctx) {
   const {stocks, settings} = ctx.derived;
   const rows = stocks.filter(row => row.outlook).slice(0, 3);
@@ -214,96 +199,105 @@ export function start(ctx) {
     action(action) { if (action === 'backup') return ctx.exportBackup(true); }};
 }
 
-function currentCard(ctx) {
-  const {active} = ctx.derived;
-  const heading = `<h2>${t.feedInUse}</h2>`;
-  if (!active) return `<section class="card stack tight">${heading}<p class="muted">${t.noMixInUse}</p></section>`;
-  const {batch, remaining} = active;
+// ───────────── Mieszanka ─────────────
+
+function activeHero(ctx) {
+  const {active, openStatus} = ctx.derived;
+  const today = ctx.today;
+  if (!active) return hero({label:t.inUse, value:'—', caption:t.noMixInUse});
+  const {batch} = active;
+  const base = batchBaseMass(batch);
+  const remaining = Math.max(0, active.remaining);
   const end = runOut(ctx);
-  const others = otherOpen(ctx);
-  return `<section class="card stack tight current-card">${heading}
-    <a class="current-link" href="#batch/${html(batch.id)}"><strong>${html(batch.recipeName)} · ${html(batchLabel(batch))}</strong>
-      <p class="display">${html(t.leftNow(kgText(Math.max(0, remaining))))}</p>
-      ${end && remaining > 0 ? '<p class="current-until">' + html(t.enoughUntil(fmt.listDate(end.date, ctx.today), t.approx + ' ' + fmt.days(end.days))) + '</p>' : ''}
-      <p class="muted">${html(t.mixedOn(fmt.listDate(batch.date, ctx.today), fmt.listDate(batch.start, ctx.today)) + ' · ' +
-        t.feedingDay(feedingDay(batch, ctx.today)))}</p>
-      <p class="muted">${html(basis(ctx))}</p></a>
-    ${remaining <= 0 ? '<p>' + warning(t.mixShouldBeGone) + '</p>' : ''}
-    ${others ? '<p class="muted">' + html(others) + '</p>' : ''}
-    <div class="actions">${button(t.finishAndMix, 'finish-and-mix:' + batch.id, 'tonal')}
-      ${textLink(t.finishBatch, 'finish/' + batch.id)}</div></section>`;
+  const gone = active.remaining <= 0;
+  const sides = [end && !gone ? side(t.until, fmt.shortDate(end.date, today)) : '', side(t.dayWord, fmt.number(feedingDay(batch, today)))]
+    .filter(Boolean);
+  const caption = [t.mixedShort(fmt.listDate(batch.date, today)) + additivesLabel(batch), gone ? t.mixGone : '',
+    openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : ''].filter(Boolean).join(' · ');
+  return hero({label:t.inUse + ' · ' + batch.recipeName, value:figure(fmt.mass(remaining)) + '<span class="of">' + html(t.of(fmt.mass(base))) + '</span>',
+    sides, bar:[remaining, base], caption, low:gone, route:'batch/' + batch.id,
+    after:`<div class="hero-buttons">${textLink(t.finishBatch, 'finish/' + batch.id)}</div>`});
 }
 
 function usageChart(ctx) {
   const rows = dailyHistory(ctx.derived.batches, addDays(ctx.today, 1));
   if (rows.length < 3) return '';
-  const width = 320, height = 150, top = 18, bottom = 24, left = 4;
   const max = Math.max(...rows.map(row => row.daily)) || 1;
-  const step = (width - left) / rows.length;
-  const bar = Math.min(28, step * .62);
   const bars = rows.map((row, i) => {
-    const h = (height - top - bottom) * row.daily / max;
-    const x = left + step * i + (step - bar) / 2;
-    const y = height - bottom - h;
     const kg = fmt.number(row.daily / 1000, 1);
-    return `<g><title>${html(fmt.monthYear(row.end) + ': ' + t.kgPerDay(kg))}</title>
-      <rect class="chart-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bar.toFixed(1)}" height="${h.toFixed(1)}" rx="3"/>
-      <text class="chart-value" x="${(x + bar / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}">${kg}</text>
-      <text class="chart-label" x="${(x + bar / 2).toFixed(1)}" y="${height - 6}">${fmt.monthYear(row.end)}</text></g>`;
+    return `<div class="bar-col" title="${html(fmt.monthYear(row.end) + ': ' + t.kgPerDay(kg))}"><span>${kg}</span>
+      <i class="${i === rows.length - 1 ? 'last' : ''}" style="height:${Math.max(4, 64 * row.daily / max).toFixed(0)}px"></i>
+      <small>${fmt.monthYear(row.end)}</small></div>`;
   }).join('');
-  return `<section class="card stack tight"><h2>${t.chartTitle}</h2>
-    <svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${t.chartLabel}">
-      <line class="chart-axis" x1="0" x2="${width}" y1="${height - bottom}" y2="${height - bottom}"/>${bars}</svg></section>`;
+  return `<section class="card chart-card"><h2 class="list-title">${t.chartTitle}</h2>
+    <div class="bars" role="img" aria-label="${t.chartLabel}">${bars}</div></section>`;
+}
+
+function recipeRows(ctx) {
+  const {recipes, ingredients} = ctx.derived;
+  if (!recipes.length) return empty(t.noRecipes);
+  return recipes.map(recipe => {
+    const composition = recipeComposition(recipe, ingredients);
+    const cost = mixtureCost([...composition.items, ...composition.additives]);
+    const sub = [fmt.ingredientCount(recipe.items.length), cost.kind === 'full' ? perKg(cost.perKg) : ''].filter(Boolean).join(' · ');
+    return line({title:recipe.name, sub:html(sub), route:'recipe/' + recipe.id,
+      after:recipe.current ? '<span class="tag">' + t.currentShort + '</span>' : ''});
+  }).join('');
+}
+
+function batchRows(ctx) {
+  const {batches, current} = ctx.derived;
+  const today = ctx.today;
+  if (!batches.length) return '<div class="r-row"><small>' + html(t.noBatches) + '</small></div>';
+  return batches.map(batch => {
+    const finished = isFinished(batch, today);
+    const planned = batch.start > today;
+    const other = current && batch.recipeName !== current.name ? batch.recipeName : '';
+    let title, sub;
+    if (finished) {
+      const result = batchResult(batch);
+      title = batchRange(batch, today);
+      sub = [fmt.days(result.days), result.daily != null ? t.kgPerDay(fmt.number(result.daily / 1000, 1)) : '', other];
+    } else {
+      title = t.fromDate(fmt.listDate(batch.start, today));
+      sub = [planned ? t.statusPlannedShort : t.statusOpenShort, planned ? '' : t.dayN(feedingDay(batch, today)), other];
+    }
+    return line({title, sub:html(sub.filter(Boolean).join(' · ')), value:html(fmt.mass(batchBaseMass(batch))), route:'batch/' + batch.id});
+  }).join('');
 }
 
 export function feed(ctx) {
-  const {derived, today} = ctx;
+  const {model} = ctx.derived;
+  const lasts = model.daily > 0 ? figure(fmt.days(100000 / model.daily)) : '—';
   return {title:t.feed, floating:fab(t.mix, 'mix', 'plus'), body:`<div class="stack">
-    ${currentCard(ctx)}
-    <section class="card stack tight"><h2>${t.howLong100}</h2><p class="display">${derived.daily > 0 ? approx(fmt.days(100000 / derived.daily)) : t.noForecast}</p>
-      <p class="muted">${html(basis(ctx))}</p></section>
+    ${activeHero(ctx)}
+    <div class="tiles">
+      ${tile({label:t.lasts100, value:lasts, caption:model.fromHistory ? t.atCurrentUse : t.fromSettingsShort})}
+      ${tile({label:t.dailyTile, value:figure(fmt.number(model.daily / 1000, 1), 'kg'), caption:useBasis(model)})}
+    </div>
     ${usageChart(ctx)}
-    <section class="stack tight"><div class="section-head"><h2>${t.recipes}</h2>${textLink(t.addRecipe, 'recipe-form', 'plus')}</div>
-      ${derived.recipes.length ? '<div class="list">' + derived.recipes.map(recipe => row({name:recipe.name,
-        symbol:'recipe', sub:recipe.current ? '<span class="tag">' + t.current + '</span>' : '',
-        value:fmt.preciseMass(recipeComposition(recipe, derived.ingredients).mass), route:'recipe/' + recipe.id})).join('') + '</div>' :
-        empty(t.noRecipes)}</section>
-    <section class="stack tight"><h2>${t.batches}</h2>${derived.batches.length ? '<div class="list">' + derived.batches.map(batch =>
-      row({name:batch.recipeName, symbol:'sack', sub:fmt.listDate(batch.date, today) + ' · ' +
-        (isFinished(batch, today) ? t.statusFinished : batch.start > today ? t.statusPlanned : t.statusOpen),
-        value:html(batchLabel(batch)), route:'batch/' + batch.id})).join('') + '</div>' : empty(t.noBatches)}</section>
-    </div>`,
-    async action(action) {
-      if (!action.startsWith('finish-and-mix:')) return;
-      const id = action.slice('finish-and-mix:'.length);
-      const end = addDays(today, 1);
-      if (await ctx.commit(data => Object.assign(find(data, 'batches', id), {end, remaining:0}), 'feed', t.batchFinished)) ctx.go('mix');
-    }};
+    ${listCard(t.recipes, recipeRows(ctx), headLink(t.newFemale, 'recipe-form'))}
+    ${listCard(t.batches, batchRows(ctx))}
+    </div>`};
 }
 
-function costRows(cost, settings, {batch = false, consumed, daily, estimated = false} = {}) {
+// Kafelki kosztu: partia albo receptura (na 100 kg).
+function costTiles(cost, settings, {batch = false, consumed = 0} = {}) {
   if (cost.kind === 'none') return '';
-  const content = [];
-  const value = text => estimated ? text + ' <small>' + t.estimate + '</small>' : text;
-  if (cost.kind === 'partial') content.push([t.cost, t.costPartial]);
-  if (cost.kind === 'full') {
-    if (batch) content.push([t.costBatch, fmt.money(cost.cents)]);
-    else content.push([t.cost100, fmt.money(cost.perKg * 100)]);
-    content.push([t.costKg, fmt.money(cost.perKg) + t.perKgSuffix]);
-    if (daily != null) content.push([t.costDaily, value(fmt.money(daily / 1000 * cost.perKg))]);
-    if (settings.readyPrice !== null) {
-      content.push([t.readyFeed, fmt.money(settings.readyPrice) + t.perKgSuffix]);
-      if (batch && consumed > 0) {
-        const difference = savings(consumed, settings.readyPrice, cost.perKg);
-        content.push([difference >= 0 ? t.cheaperBy : t.dearerBy, value(fmt.money(Math.abs(difference)))]);
-      }
-      if (!batch) {
-        const difference = savings(100000, settings.readyPrice, cost.perKg);
-        content.push([difference >= 0 ? t.cheaper100 : t.dearer100, fmt.money(Math.abs(difference))]);
-      }
+  if (cost.kind === 'partial') return strip({title:t.cost, line:t.costPartial, tone:'info'});
+  const tiles = [];
+  const ready = settings.readyPrice;
+  if (batch) tiles.push(tile({label:t.costBatch, value:figure(zloty(cost.cents), 'zł'), caption:perKg(cost.perKg)}));
+  else tiles.push(tile({label:t.cost100, value:figure(zloty(cost.perKg * 100), 'zł'), caption:perKg(cost.perKg)}));
+  if (ready !== null) {
+    const mass = batch ? consumed : 100000;
+    if (mass > 0) {
+      const difference = savings(mass, ready, cost.perKg);
+      tiles.push(tile({label:batch ? (difference >= 0 ? t.cheaperBy : t.dearerBy) : (difference >= 0 ? t.cheaper100 : t.dearer100),
+        value:figure(zloty(Math.abs(difference)), 'zł'), caption:t.readyAt(perKg(ready))}));
     }
   }
-  return '<section class="card stack tight"><h2>' + t.cost + '</h2>' + details(content) + '</section>';
+  return '<div class="tiles">' + tiles.join('') + '</div>';
 }
 
 export function recipeView(ctx, id) {
@@ -311,103 +305,132 @@ export function recipeView(ctx, id) {
   if (!recipe) return missing('feed');
   const composition = recipeComposition(recipe, ctx.derived.ingredients);
   const byId = new Map([...composition.items, ...composition.additives].map(item => [item.ingredientId, item]));
-  const recipeRows = recipe.items.map(({ingredientId}) => {
+  const rows = recipe.items.map(({ingredientId}) => {
     const item = byId.get(ingredientId);
     const per100 = fmt.precise(item.amount / 1000 * 100000 / composition.mass, item.unit);
-    if (item.additive) return row({name:item.name, sub:'<span class="tag">' + t.additive + '</span> ' + html(t.per100(per100)),
-      value:fmt.precise(item.amount / 1000, item.unit)});
-    return row({name:item.name, sub:html(fmt.percent(item.share) + ' · ' + t.per100(per100)),
-      value:fmt.precise(item.amount / 1000, item.unit)});
+    return line({title:item.name, strong:false, sub:html(item.additive ? t.additiveShort : fmt.percent(item.share)), value:html(per100)});
   }).join('');
-  return {title:recipe.name, parent:'feed', body:`<div class="stack">
-    <section class="card stack tight"><h2>${t.recipe}</h2><p class="display">${fmt.preciseMass(composition.mass)}</p>
-      ${recipe.current ? '<div><span class="tag">' + t.current + '</span></div>' : ''}
-      ${recipe.notes ? '<p class="notes">' + html(recipe.notes) + '</p>' : ''}</section>
-    <div class="actions">${link(t.mix, 'mix/' + id, 'tonal', 'plus')}${link(t.edit, 'recipe-form/' + id, 'tonal', 'edit')}</div>
-    <section class="stack tight"><h2>${t.composition}</h2><div class="list">${recipeRows}</div></section>
-    ${costRows(mixtureCost([...composition.items, ...composition.additives]), ctx.derived.settings)}
-    <div class="actions">${recipe.items.length > 1 ? textLink(t.reorder, 'recipe-order/' + id) : ''}
-      ${recipe.current ? '' : button(t.setCurrent, 'current', 'text', 'check')}</div></div>`,
+  const cost = mixtureCost([...composition.items, ...composition.additives]);
+  const extra = [recipe.items.length > 1 ? textLink(t.reorder, 'recipe-order/' + id) : '',
+    recipe.current ? '' : button(t.setCurrent, 'current', 'text', 'check')].filter(Boolean).join('');
+  return {title:recipe.name, parent:'feed', edit:'recipe-form/' + id, body:`<div class="stack">
+    ${hero({label:recipe.current ? t.recipe + ' · ' + t.currentShort : t.recipe, value:figure(fmt.ingredientCount(recipe.items.length)),
+      sides:cost.kind === 'full' ? [side('', perKg(cost.perKg))] : [], after:`<div class="hero-action">${link(t.mix, 'mix/' + id, 'filled', 'plus')}</div>`})}
+    ${recipe.notes ? '<section class="card"><p class="notes">' + html(recipe.notes) + '</p></section>' : ''}
+    ${listCard(t.composition100, rows)}
+    ${costTiles(cost, ctx.derived.settings)}
+    ${extra ? '<div class="actions">' + extra + '</div>' : ''}</div>`,
     action: action => { if (action === 'current') return ctx.commit(data => ctx.setCurrent(data, id)); }};
 }
 
 export function batchView(ctx, id, fromEventId) {
   const batch = find(ctx.data, 'batches', id);
   if (!batch) return missing('feed');
+  const today = ctx.today;
   const event = fromEventId && find(ctx.data, 'ingredientEvents', fromEventId);
   const parent = event && event.batchId === id ? 'movement-detail/' + event.id : fromEventId === 'start' ? 'start' : 'feed';
-  const result = batchStats(batch, ctx.data, ctx.derived, ctx.today);
-  const estimated = text => !result.finished ? text + ' <small>' + t.estimate + '</small>' : text;
-  const metrics = [];
-  if (result.daily != null) {
-    metrics.push([t.dailyUse, estimated(t.kgPerDay(fmt.number(result.daily / 1000, 2)))]);
-    if (result.daily > 0) metrics.push([t.howLong100, fmt.days(100000 / result.daily)]);
-    if (result.birds > 0) metrics.push([t.perBird, estimated(fmt.number(result.daily / result.birds, 0) + ' g')]);
+  const result = batchStats(batch, ctx.data, ctx.derived, today);
+  const planned = batch.start > today;
+  const base = batchBaseMass(batch);
+  let label, value, sides, bar = null;
+  if (result.finished) {
+    label = t.statusFinished + ' · ' + batchRange(batch, today);
+    value = figure(fmt.days(result.days));
+    sides = [side('', fmt.mass(base)), additivesLabel(batch) ? '<span>' + html(additivesLabel(batch).trim()) + '</span>' : ''];
+  } else {
+    const left = Math.max(0, result.remaining ?? base);
+    label = (planned ? t.statusPlanned : t.statusOpen) + ' · ' + t.fromDate(fmt.listDate(batch.start, today));
+    value = figure(fmt.mass(left)) + '<span class="of">' + html(t.of(fmt.mass(base))) + '</span>';
+    sides = planned ? [] : [side(t.dayWord, fmt.number(feedingDay(batch, today)))];
+    bar = [left, base];
   }
-  const dates = [[t.mixedDate, fmt.fullDate(batch.date)], [t.feedingFrom, fmt.fullDate(batch.start)],
-    ...(batch.end ? [[t.lastFeedingDay, fmt.fullDate(addDays(batch.end, -1))]] : []),
-    ...(result.remaining != null ? [[t.leftover, estimated(fmt.mass(result.remaining))]] : [])];
+  const leftover = result.finished && result.remaining > 0 ? t.leftoverShort(fmt.mass(result.remaining)) : '';
+  const caption = [t.mixedShort(fmt.listDate(batch.date, today)) + (result.finished ? '' : additivesLabel(batch)), leftover].filter(Boolean).join(' · ');
+  const tiles = result.daily != null ? tile({label:t.dailyTile, value:figure(fmt.number(result.daily / 1000, 1), 'kg'),
+    caption:result.birds > 0 ? t.perBirdShort(fmt.number(result.daily / result.birds, 0)) : ''}) : '';
   const items = batch.items.map(item => {
     const extra = item.additive || item.oil;
-    const amount = item.millilitres != null ? fmt.stockQuantity(item.millilitres / 1000, 'l')
-      : extra ? fmt.stockQuantity(showAmount(item.grams, item), item.unit) : fmt.quantity(showAmount(item.grams, item), item.unit, true);
-    return row({name:item.name, sub:extra ? '<span class="tag">' + t.additive + '</span>' : '', value:amount});
+    const shown = item.millilitres != null ? fmt.quantity(item.millilitres / 1000, 'l', true)
+      : fmt.quantity(showAmount(item.grams, item), item.unit, true);
+    return line({title:item.name, strong:false, sub:extra ? html(t.additiveShort) : '', value:html(shown)});
   }).join('');
-  return {title:t.batch, subtitle:batch.recipeName, parent, body:`<div class="stack">
-    <section class="card stack tight"><p class="display">${html(batchLabel(batch))}</p>${details(dates)}</section>
-    <div class="actions">${link(result.finished ? t.changeFinish : t.finishBatch, 'finish/' + id + '/batch', 'tonal')}
-      ${textLink(t.editBatch, 'batch-form/' + id, 'edit')}</div>
-    ${metrics.length ? '<section class="card stack tight"><h2>' + t.results + '</h2>' + details(metrics) + '</section>' : ''}
-    <section class="stack tight"><h2>${t.batchContent}</h2><div class="list">${items}</div></section>
-    ${costRows(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed, daily:result.daily, estimated:!result.finished})}
+  return {title:t.batch, subtitle:batch.recipeName, parent, edit:'batch-form/' + id, body:`<div class="stack">
+    ${hero({label, value, sides:sides.filter(Boolean), bar, caption})}
+    ${tiles ? '<div class="tiles">' + tiles + '</div>' : ''}
+    ${costTiles(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed})}
+    ${listCard(t.batchContent, items)}
+    <div class="actions">${link(result.finished ? t.changeFinish : t.finishBatch, 'finish/' + id + '/batch', 'tonal')}</div>
     </div>`};
+}
+
+// ───────────── Magazyn ─────────────
+
+const HORIZON = 90; // pełny pasek = zapas na 3 miesiące i więcej
+
+function stockLine(ctx, {ingredient, grams, known, outlook}) {
+  const {settings} = ctx.derived;
+  const low = (known && grams < 0) || (outlook && outlook.days < settings.threshold);
+  const notes = [];
+  if (outlook) notes.push(`${low ? icon('warn') : ''}<em>${html(fmt.days(outlook.days))}</em> · ${html(t.until + ' ' + fmt.shortDate(outlook.date, ctx.today))}`);
+  if (!known) notes.push(html(t.enterStockShort));
+  else if (grams < 0) notes.push(html(t.checkStockShort));
+  else if (!outlook) notes.push(html(t.outsideRecipe));
+  if (isAdditive(ingredient)) notes.push(html(t.additiveShort));
+  return `<a class="s-row${low ? ' s-row--low' : ''}" href="#ingredient/${html(ingredient.id)}">
+    <span class="s-top"><span class="grow"><b>${html(ingredient.name)}</b><small>${notes.join(' · ')}</small></span>
+      <span class="s-val">${known ? html(amount(grams, ingredient)) : '—'}</span>${icon('next')}</span>
+    ${outlook ? `<progress class="s-bar" aria-hidden="true" value="${Math.min(outlook.days, HORIZON)}" max="${HORIZON}"></progress>` : ''}</a>`;
 }
 
 export function warehouse(ctx) {
   const {stocks} = ctx.derived;
-  return {title:t.stock, floating:fab(t.add, 'movement/add', 'plus'), body:`<div class="stack">
-    ${stocks.length && !stocks.some(row => row.known) ? enterStocksCard(stocks) : ''}
-    <section class="stack tight"><div class="section-head"><h2>${t.ingredients}</h2>${textLink(t.addIngredient, 'ingredient-form', 'plus')}</div>
-    ${stocks.length ? stockRows(ctx) : empty(t.noIngredients)}</section></div>`};
+  const first = firstUnknown(stocks);
+  const none = stocks.length && !stocks.some(row => row.known);
+  return {title:t.stock, floating:fab(t.addToStockShort, 'movement/add', 'plus'), body:`<div class="stack">
+    ${none && first ? strip({title:t.enterStocks, line:t.enterStocksLine, route:'movement/correction/' + first.id, label:t.enterShort, tone:'info'}) : ''}
+    ${listCard(t.stockList, stocks.length ? stocks.map(item => stockLine(ctx, item)).join('')
+      : '<div class="r-row"><small>' + html(t.noIngredients) + '</small></div>', headLink(t.newMale, 'ingredient-form'))}
+    </div>`};
 }
 
 const formatRate = (price, ingredient) => fmt.money(price.cents * 1000 / price.grams) + t.perKgSuffix +
   (ingredient.unit === 'l' ? ' · ' + fmt.money(price.cents * 1000 * ingredient.density / price.grams) + t.perLitreSuffix : '');
 
-function buyCard(ctx, item) {
-  const {ingredient, grams, rate} = item;
+function needTiles(ctx, {ingredient, grams, rate}) {
   const {daily, mixed} = ctx.derived;
-  const rows = [2, 3].map(months => {
+  return '<div class="tiles">' + [2, 3].map(months => {
     const need = roundPurchase(purchaseNeed(grams, rate, daily, mixed, months * 30), ingredient.unit, ingredient.density);
-    return '<p>' + (need > 0 ? html(t.buyFor(months)) + ' <strong>' + fmt.number(need, 1) + ' ' + ingredient.unit + '</strong>'
-      : html(t.enoughFor(months))) + '</p>';
-  }).join('');
-  return `<section class="card stack tight"><h2>${t.toBuy}</h2>${rows}</section>`;
+    return tile({label:t.needFor(months), value:need > 0 ? figure(fmt.quantity(need, ingredient.unit)) : '—',
+      caption:need > 0 ? t.overStock : t.stockEnough});
+  }).join('') + '</div>';
 }
 
 export function ingredientView(ctx, id) {
   const item = ctx.derived.stocks.find(entry => entry.ingredient.id === id);
   if (!item) return missing('stock');
-  const {ingredient, grams, known, outlook} = item;
+  const {ingredient, grams, known, rate, outlook} = item;
+  const low = (known && grams < 0) || (outlook && outlook.days < ctx.derived.settings.threshold);
   const events = live(ctx.data.ingredientEvents).filter(row => row.ingredientId === id).sort(latestFirst);
-  return {title:ingredient.name, parent:'stock', body:`<div class="stack"><section class="card stack tight">
-    <h2>${t.shouldBe}</h2>${isAdditive(ingredient) ? '<p class="muted">' + t.kindAdditive + '</p>' : ''}
-    <p class="display">${known ? quantity(grams, ingredient) : t.enterAmount}</p>
-    ${known && grams < 0 ? warning(t.checkStock) : ''}
-    ${known ? forecast(outlook, ctx.derived.settings.threshold, ctx.today) : ''}
-    ${ingredient.price ? '<p class="muted">' + t.lastPrice + ' ' + formatRate(ingredient.price, ingredient) + '</p>' : ''}
-    </section>
-    <div class="actions">${link(t.add, 'movement/add/' + id, 'tonal', 'plus')}
-      ${link(t.stockCorrection, 'movement/correction/' + id, 'tonal')}
-      ${textLink(t.withdrawal, 'movement/withdrawal/' + id)}
-      ${textLink(t.edit, 'ingredient-form/' + id, 'edit')}</div>
-    ${outlook ? buyCard(ctx, item) : ''}
-    <section class="stack tight"><h2>${t.history}</h2>${events.length ? '<div class="list">' + events.map(event => {
-      const batch = event.batchId && find(ctx.data, 'batches', event.batchId);
-      const sub = fmt.listDate(event.date, ctx.today) + (batch ? ' · ' + html(batch.recipeName) : '');
-      return row({name:t.movementNames[event.type], sub, value:quantity(event.grams, ingredient, true),
-        route:'movement-detail/' + event.id});
-    }).join('') + '</div>' : empty(t.noHistory)}</section></div>`};
+  const caption = [!known ? t.enterStockShort : grams < 0 ? t.checkStockShort : '',
+    rate != null ? t.inEvery100(fmt.precise(showAmount(rate * 100000, ingredient), ingredient.unit)) : t.outsideRecipe,
+    isAdditive(ingredient) ? t.additiveShort : '',
+    ingredient.price ? t.lastPriceShort(formatRate(ingredient.price, ingredient)) : ''].filter(Boolean).join(' · ');
+  const sides = outlook ? [side('', fmt.days(outlook.days)), side(t.until, fmt.shortDate(outlook.date, ctx.today))] : [];
+  const history = events.map(event => {
+    const batch = event.batchId && find(ctx.data, 'batches', event.batchId);
+    const price = event.price && event.priceMode !== 'total' ? fmt.money(event.price.cents * 1000 / event.price.grams) + t.perKgSuffix : '';
+    const sub = [fmt.listDate(event.date, ctx.today), batch ? batch.recipeName : price, event.type === 'batch' ? '' : event.notes]
+      .filter(Boolean).join(' · ');
+    return line({title:t.movementNames[event.type], strong:false, sub:html(sub), value:html(signedAmount(event.grams, ingredient)),
+      plus:event.grams > 0, route:'movement-detail/' + event.id});
+  }).join('');
+  return {title:ingredient.name, parent:'stock', edit:'ingredient-form/' + id, body:`<div class="stack">
+    ${hero({label:t.stockLabel, value:known ? figure(amount(grams, ingredient)) : '—', sides, low,
+      bar:outlook ? [Math.min(outlook.days, HORIZON), HORIZON] : null, caption})}
+    <div class="chip-row">${link(t.add, 'movement/add/' + id, 'tonal', 'plus')}${link(t.correctionShort, 'movement/correction/' + id, 'chip')}
+      ${link(t.withdrawalShort, 'movement/withdrawal/' + id, 'chip')}</div>
+    ${outlook ? needTiles(ctx, item) : ''}
+    ${listCard(t.history, history || '<div class="r-row"><small>' + html(t.noHistory) + '</small></div>')}</div>`};
 }
 
 export function movementDetail(ctx, id) {
@@ -428,121 +451,116 @@ export function movementDetail(ctx, id) {
     }
   }
   if (batch) info.push([t.batch, html(batch.recipeName) + ' · ' + html(batchLabel(batch))]);
-  const action = batch ? link(t.showBatch, 'batch/' + batch.id + '/' + id, 'tonal') :
-    event.type !== 'batch' ? link(t.edit, 'movement/' + event.type + '/' + ingredient.id + '/' + id, 'tonal', 'edit') : '';
-  return {title:t.movementNames[event.type], subtitle:ingredient.name, parent, body:`<div class="stack">
+  const action = batch ? link(t.showBatch, 'batch/' + batch.id + '/' + id, 'tonal') : '';
+  const edit = !batch && event.type !== 'batch' ? 'movement/' + event.type + '/' + ingredient.id + '/' + id : '';
+  return {title:t.movementNames[event.type], subtitle:ingredient.name, parent, edit, body:`<div class="stack">
     <section class="card stack tight"><p class="display">${quantity(event.grams, ingredient, true)}</p>${details(info)}
     ${event.notes ? '<p class="notes">' + html(event.notes) + '</p>' : ''}</section>
-    <div class="actions">${action}</div></div>`};
+    ${action ? '<div class="actions">' + action + '</div>' : ''}</div>`};
 }
+
+// ───────────── Kury ─────────────
 
 const hensRoosters = counts => {
   const parts = [counts.hens ? fmt.hens(counts.hens) : '', counts.roosters ? fmt.roosters(counts.roosters) : ''].filter(Boolean);
-  return parts.length ? parts.join(', ') : fmt.birds(0);
+  return parts.length ? parts.join(' · ') : t.pieces('0');
 };
 
-// Krótki opis klucia albo piskląt: wartość i podpis.
-function rearingSummary(cohort, ctx) {
-  const stage = cohortStage(cohort);
-  if (stage === 'incubation') {
-    const state = incubation(cohort, ctx.today);
-    const value = state.day > 22 ? t.overdue : state.early ? t.canHatch : t.hatchIn(t.approx + ' ' + fmt.days(state.left));
-    return {title:t.incubation, value, low:state.day > 22,
-      sub:[t.incubationDay(fmt.number(state.day)), fmt.eggs(state.eggsLeft)].join(' · '), count:''};
-  }
-  const count = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today).young;
-  const feedText = cohort.rearing.feedFrom ? t.feedOwnShort : t.feedBoughtShort;
-  return {title:t.chicks, value:fmt.chicks(count), count:t.pieces(fmt.number(count)),
-    sub:[t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))), feedText].join(' · ')};
+// Podpis rocznika: podział tylko w mieszanych, „koguty” gdy same koguty; potem wiek i oznaczenie.
+function cohortSub(cohort, counts, today) {
+  const split = counts.hens && counts.roosters ? hensRoosters(counts) : counts.roosters ? t.roosters.toLowerCase() : '';
+  return [split, fmt.age(cohortAge(cohort, today)), cohort.mark].filter(Boolean).join(' · ');
 }
 
 export function flockView(ctx) {
   const cohorts = ctx.derived.cohorts.slice().sort(latestFirst);
   const {flock, rearing} = ctx.derived;
-  const rearingRows = rearing.map(cohort => {
-    const info = rearingSummary(cohort, ctx);
-    return row({name:cohort.name, symbol:'hen', sub:html(info.title + ' · ' + info.sub), value:info.count, route:'cohort/' + cohort.id});
+  const top = cohorts.length
+    ? hero({label:t.inCoop, value:figure(fmt.number(flock.total), t.pcs), sides:flockParts(flock).map(sideCount)})
+    : hero({label:t.inCoop, value:'—', caption:t.addFirstCohort, after:`<div class="hero-action">${link(t.addCohort, 'cohort-form', 'filled', 'plus')}</div>`});
+  const rows = cohorts.map(cohort => {
+    const counts = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today);
+    return line({title:cohort.name, sub:html(cohortSub(cohort, counts, ctx.today)),
+      value:html(t.pieces(fmt.number(counts.hens + counts.roosters))), route:'cohort/' + cohort.id});
   }).join('');
-  return {title:t.flock, floating:fab(t.addCohort, 'cohort-form', 'plus'), body:`<div class="stack">
-    ${cohorts.length ? `<section class="card stack tight"><h2>${t.together}</h2><p class="display">${fmt.birds(flock.total)}</p>
-      <p class="muted">${html(hensRoosters(flock))}${flock.young ? html(', ' + t.orChicks(fmt.chicks(flock.young))) : ''}</p></section>` : ''}
-    ${rearing.length ? `<section class="stack tight"><h2>${t.rearingTitle}</h2><div class="list">${rearingRows}</div></section>` : ''}
-    ${cohorts.length ? `<section class="stack tight"><h2>${t.cohorts}</h2><div class="list">${cohorts.map(cohort => {
-      const counts = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today);
-      const sub = [hensRoosters(counts), fmt.age(cohortAge(cohort, ctx.today)), cohort.mark].filter(Boolean).map(html).join(' · ');
-      return row({name:cohort.name, symbol:'hen', sub, value:t.pieces(fmt.number(counts.hens + counts.roosters)), route:'cohort/' + cohort.id});
-    }).join('')}</div></section>` : empty(t.addFirstCohort)}
-    <div>${link(t.addRearing, 'rearing-form', 'tonal', 'plus')}</div></div>`};
+  return {title:t.flock, body:`<div class="stack">
+    ${top}
+    ${rearing.length ? '<div class="tiles">' + rearing.map(cohort => rearingTile(cohort, ctx)).join('') + '</div>' : ''}
+    ${cohorts.length ? listCard(t.cohorts, rows, headLink(t.newMale, 'cohort-form')) : ''}
+    <div>${textLink(t.addRearing, 'rearing-form', 'plus')}</div></div>`};
 }
 
+// Wiersze zmian: data, notatka, „−1 kura”.
 function historyRows(ctx, cohort) {
-  const sexLabel = {hens:t.hens, roosters:t.roosters, young:t.chicks};
+  const counted = {hens:fmt.hens, roosters:fmt.roosters, young:fmt.chicks};
   return cohortEvents(cohort, ctx.data.cohortChanges).reverse().map(event => {
     const kind = flockEventKind(event);
-    const value = (kind === 'add' ? '+' + fmt.number(event.count) : kind === 'loss' ? '−' + fmt.number(event.count)
-      : t.correctionRow(fmt.number(event.count)));
-    const sub = [sexLabel[event.sex], event.notes].filter(Boolean).map(html).join(' · ');
-    return row({name:fmt.fullDate(event.date), sub, value, route:kind === 'correction' ? '' : 'change/' + cohort.id + '/' + event.id});
+    const text = counted[event.sex ?? 'hens'](event.count);
+    const value = kind === 'add' ? '+' + text : kind === 'loss' ? '−' + text : t.correctionRow(fmt.number(event.count));
+    return line({title:fmt.fullDate(event.date), strong:false, sub:html(event.notes), value:html(value), plus:kind === 'add',
+      route:kind === 'correction' ? '' : 'change/' + cohort.id + '/' + event.id});
   }).join('');
 }
 
-function eggDetails(rearing) {
-  if (rearing.method === 'bought') return [];
-  const rows = [[t.setDate, fmt.fullDate(rearing.setDate)], [t.eggsSet, fmt.number(rearing.eggs)]];
-  if (rearing.infertile != null) rows.push([t.eggsInfertile, fmt.number(rearing.infertile)]);
-  if (rearing.dead != null) rows.push([t.eggsDead, fmt.number(rearing.dead)]);
+const changeButtons = (id, both = true) => `<div class="chip-row">${link(t.lossButton, 'change/' + id + '/loss', both ? 'tonal' : 'chip')}
+  ${both ? link(t.addButton, 'change/' + id + '/add', 'chip') : ''}</div>`;
+
+function hatchInfo(rearing) {
+  if (rearing.method === 'bought' || rearing.hatched == null) return '';
   const rate = hatchRate(rearing);
-  if (rate) rows.push([t.hatchRate, html(t.hatchRateValue(fmt.percent(rate.ofSet), rate.ofFertile != null ? fmt.percent(rate.ofFertile) : ''))]);
-  return rows;
+  return t.hatchedOf(fmt.number(rearing.hatched), fmt.eggs(rearing.eggs)) + (rate ? ' (' + fmt.number(rate.ofSet * 100) + '%)' : '');
 }
 
 export function cohortView(ctx, id) {
   const cohort = find(ctx.data, 'cohorts', id);
   if (!cohort) return missing('flock');
+  const today = ctx.today;
   const stage = cohortStage(cohort);
   const rearing = cohort.rearing;
   if (stage === 'incubation') {
-    const state = incubation(cohort, ctx.today);
-    const info = rearingSummary(cohort, ctx);
-    return {title:cohort.name, parent:'flock', body:`<div class="stack">
-      <section class="card stack tight"><h2>${t.incubation} · ${t.methods[rearing.method]}</h2>
-        <p class="display${info.low ? ' display--low' : ''}">${html(info.value)}</p>
-        <p class="muted">${html(t.incubationDay(fmt.number(state.day)) + ' · ' + t.hatchDue(fmt.fullDate(state.due)))}</p>
-        ${details([...eggDetails(rearing), [t.eggsLeft, fmt.number(state.eggsLeft)]])}</section>
-      <div class="actions">${link(t.enterHatched, 'hatch/' + id, 'tonal')}${textLink(t.edit, 'rearing-form/' + id, 'edit')}</div></div>`};
+    const state = incubation(cohort, today);
+    const {late, value} = hatchValue(state);
+    const lost = [rearing.infertile ? t.infertileCount(fmt.number(rearing.infertile)) : '',
+      rearing.dead ? t.deadCount(fmt.number(rearing.dead)) : ''].filter(Boolean).join(' · ');
+    return {title:cohort.name, subtitle:t.methods[rearing.method], parent:'flock', edit:'rearing-form/' + id, body:`<div class="stack">
+      ${hero({label:late || state.early ? t.incubation : t.toHatchLabel, value, low:late,
+        sides:[side(t.dayWord, fmt.number(state.day), t.of21), side(t.day21, fmt.shortDate(state.due, today))],
+        bar:[Math.min(state.day, 21), 21], caption:t.hatchWindow})}
+      <div class="tiles">
+        ${tile({label:t.setShort, value:figure(fmt.eggs(rearing.eggs)), caption:fmt.listDate(rearing.setDate, today)})}
+        ${tile({label:t.leftShort, value:figure(fmt.eggs(state.eggsLeft)), caption:lost})}
+      </div>
+      <div class="hero-action">${link(t.enterHatched, 'hatch/' + id, 'filled')}</div></div>`};
   }
-  const counts = cohortCounts(cohort, ctx.data.cohortChanges, ctx.today);
+  const counts = cohortCounts(cohort, ctx.data.cohortChanges, today);
   const hatched = cohort.dateKind === 'hatch';
   if (stage === 'chicks') {
-    return {title:cohort.name, parent:'flock', body:`<div class="stack">
-      <section class="card stack tight"><h2>${t.chicks}</h2><p class="display">${t.pieces(fmt.number(counts.young))}</p>
-        ${details([[hatched ? t.hatchedDate : t.purchaseDate, fmt.fullDate(cohort.date)],
-          [t.age, html(t.weeksOld(fmt.number(weeksOld(cohort, ctx.today))))],
-          [t.feedLabel, html(rearing.feedFrom ? t.feedOwn(fmt.fullDate(rearing.feedFrom)) : t.feedBought)],
-          ...eggDetails(rearing)])}</section>
-      <div class="actions">${rearing.feedFrom ? '' : link(t.switchFeed, 'feed-switch/' + id, 'tonal')}
-        ${link(t.moveToFlock, 'transfer/' + id, 'tonal')}${textLink(t.changeCount, 'change/' + id)}
-        ${textLink(t.edit, 'rearing-form/' + id, 'edit')}</div>
-      <section class="stack tight"><h2>${t.changes}</h2><div class="list">${historyRows(ctx, cohort)}
-        ${row({name:fmt.fullDate(cohort.date), sub:hatched ? t.hatchedRow : t.startedRow, value:t.pieces(fmt.number(rearing.chicks))})}
-      </div></section></div>`};
+    const caption = [(hatched ? t.hatchedOn : t.boughtOn)(fmt.listDate(cohort.date, today)), hatchInfo(rearing)].filter(Boolean).join(' · ');
+    return {title:cohort.name, subtitle:t.chicks, parent:'flock', edit:'rearing-form/' + id, body:`<div class="stack">
+      ${hero({label:t.chicks, value:figure(fmt.number(counts.young), t.pcs), caption,
+        sides:[side('', fmt.number(weeksOld(cohort, today)), t.weeksShort),
+          rearing.feedFrom ? side(t.mixFrom, fmt.listDate(rearing.feedFrom, today)) : side(t.feedWord, t.boughtWord)]})}
+      <div class="chip-row">${rearing.feedFrom ? '' : link(t.switchFeed, 'feed-switch/' + id, 'tonal')}
+        ${link(t.moveToFlock, 'transfer/' + id, 'tonal')}${link(t.lossButton, 'change/' + id + '/loss', 'chip')}</div>
+      ${listCard(t.changes, historyRows(ctx, cohort) + line({title:fmt.fullDate(cohort.date), strong:false,
+        sub:html((hatched ? t.hatchedRow : t.startedRow).toLowerCase()), value:html(fmt.chicks(rearing.chicks))}))}</div>`};
   }
-  const info = [[hatched ? t.hatchDate : t.purchaseDate, fmt.fullDate(cohort.date)], [t.age, fmt.age(cohortAge(cohort, ctx.today))],
-    ...(cohort.mark ? [[t.mark, html(cohort.mark)]] : [])];
-  if (rearing) {
-    info.push([t.moveDate, fmt.fullDate(cohort.joined)]);
-    if (rearing.method !== 'bought') info.push([t.fromHatch, html(t.fromHatchValue(fmt.eggs(rearing.eggs), fmt.number(rearing.hatched)))]);
-  }
-  return {title:cohort.name, parent:'flock', body:`<div class="stack">
-    <section class="card stack tight"><p class="display">${fmt.birds(counts.hens + counts.roosters)}</p>
-    <p class="muted">${html(hensRoosters(counts))}</p>${details(info)}
-    ${cohort.notes ? '<p class="notes">' + html(cohort.notes) + '</p>' : ''}</section>
-    <div class="actions">${link(t.changeCount, 'change/' + id, 'tonal')}${textLink(t.edit, 'cohort-form/' + id, 'edit')}</div>
-    <section class="stack tight"><h2>${t.changes}</h2><div class="list">${historyRows(ctx, cohort)}
-      ${row({name:fmt.fullDate(cohort.joined ?? cohort.date), sub:rearing ? t.moveToFlock : t.newCohortRow,
-        value:html(hensRoosters(cohort))})}
-      ${rearing ? row({name:fmt.fullDate(cohort.date), sub:hatched ? t.hatchedRow : t.startedRow, value:t.pieces(fmt.number(rearing.chicks))}) : ''}
-    </div></section></div>`};
+  const age = fmt.age(cohortAge(cohort, today));
+  const origin = rearing
+    ? [t.inCoopSince(fmt.listDate(cohort.joined, today)), hatchInfo(rearing)]
+    : [(hatched ? t.hatchedOn : t.boughtOn)(fmt.fullDate(cohort.date)) + (cohort.weeks ? ' ' + t.atAgeWeeks(fmt.number(cohort.weeks)) : '')];
+  const sides = [...[counts.hens ? fmt.hens(counts.hens) : '', counts.roosters ? fmt.roosters(counts.roosters) : ''].filter(Boolean).map(sideCount),
+    cohort.mark ? side('', cohort.mark) : ''].filter(Boolean);
+  const firstRow = line({title:fmt.fullDate(cohort.joined ?? cohort.date), strong:false,
+    sub:html(rearing ? t.movedRow : hatched ? t.hatchedRow.toLowerCase() : t.boughtRow), value:html(hensRoosters(cohort)), plus:true});
+  return {title:cohort.name, parent:'flock', edit:'cohort-form/' + id, body:`<div class="stack">
+    ${hero({label:t.inCohort, value:figure(fmt.number(counts.hens + counts.roosters), t.pcs), sides,
+      caption:[...origin, t.nowAge(age)].filter(Boolean).join(' · ')})}
+    ${cohort.notes ? '<section class="card"><p class="notes">' + html(cohort.notes) + '</p></section>' : ''}
+    ${changeButtons(id)}
+    ${listCard(t.changes, historyRows(ctx, cohort) + firstRow +
+      (rearing ? line({title:fmt.fullDate(cohort.date), strong:false, sub:html((hatched ? t.hatchedRow : t.startedRow).toLowerCase()),
+        value:html(fmt.chicks(rearing.chicks))}) : ''))}</div>`};
 }
 
 export function missing(parent = 'start') {
