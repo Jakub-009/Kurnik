@@ -1,5 +1,5 @@
 import {addDays, batchAdditives, batchBaseMass, batchOil, batchResult, cohortAge, cohortCounts, cohortEvents, cohortStage, dailyHistory,
-  dateOf, dayNumber, daysBetween, flockEventKind, hatchRate, incubation, isAdditive, weeksOld, lastBatchMass, mixtureCost, nowPoint, purchaseNeed,
+  dateOf, dayNumber, daysBetween, flockEventKind, hatchRate, incubation, isAdditive, isOwn, weeksOld, lastBatchMass, mixtureCost, nowPoint, purchaseNeed,
   recipeComposition, roundPurchase, savings, scaleBatch} from './calc/index.js';
 import {live} from './db.js';
 import {batchStats, find, isFinished, latestFirst, showAmount} from './model.js';
@@ -40,6 +40,15 @@ function firstUnknown(stocks) {
 }
 
 // „ + 2,2 l oleju” albo „ + dodatki”; pusto, gdy partia nie ma dodatków.
+// „dodano 2,2 l oleju” albo „z dodatkami”; pusto, gdy partia nie ma dodatków.
+function additivesText(batch) {
+  const additives = batchAdditives(batch);
+  if (!additives.length) return '';
+  const oil = batchOil(batch) ?? additives[0];
+  if (additives.length === 1 && /^olej/iu.test(oil.name) && oil.millilitres != null) return t.addedOil(fmt.number(oil.millilitres / 1000, 1) + ' l');
+  return t.withAdditivesShort;
+}
+
 function additivesLabel(batch) {
   const additives = batchAdditives(batch);
   if (!additives.length) return '';
@@ -64,24 +73,49 @@ function runOut(ctx) {
 
 // ───────────── Start ─────────────
 
-// Czego brakuje na kolejną partię tej samej masy co ostatnia: {mass, missing:[tekst], unknown:[składnik]}.
-function nextBatchNeeds(ctx) {
+// Ile da się zmieszać z magazynu według aktualnej receptury. Ograniczają tylko składniki liczone w proporcjach
+// z wpisanym stanem; dodatki (np. olej) i składniki bez stanu są podawane osobno, bo bez nich też da się mieszać.
+export function mixCapacity(ctx) {
   const {composition, batches, stocks} = ctx.derived;
   if (!composition) return null;
-  const mass = lastBatchMass(batches);
+  const last = lastBatchMass(batches);
   const byId = new Map(stocks.map(row => [row.ingredient.id, row]));
-  const missing = [], unknown = [];
-  for (const item of scaleBatch(composition, mass)) {
+  let max = Infinity, least = null;
+  const unknown = [], none = [], low = [];
+  for (const item of composition.items) {
     const entry = byId.get(item.ingredientId);
     if (!entry) continue;
-    const ingredient = entry.ingredient;
-    if (!entry.known) { unknown.push(ingredient); continue; }
-    if (entry.grams < item.grams) {
-      const need = roundPurchase(item.grams - entry.grams, ingredient.unit, ingredient.density);
-      missing.push(item.name + ' ' + fmt.quantity(need, ingredient.unit));
-    }
+    if (!entry.known) { unknown.push(item.name); continue; }
+    const possible = Math.max(0, entry.grams) / item.share;
+    if (possible < max) { max = possible; least = item.name; }
   }
-  return {mass, missing, unknown};
+  for (const item of composition.additives) {
+    const entry = byId.get(item.ingredientId);
+    if (!entry) continue;
+    if (!entry.known) unknown.push(item.name);
+    else if (entry.grams <= 0) none.push(item.name);
+    else if (entry.grams < item.share * last) low.push(item.name);
+  }
+  return {last, max:Number.isFinite(max) ? Math.floor(max / 1000) * 1000 : null, least, unknown, none, low};
+}
+
+// Pasek tylko wtedy, gdy ze stanu nie wyjdzie partia jak ostatnia, brakuje dodatku albo nie wszystko jest wpisane.
+function needsStrip(ctx) {
+  const capacity = mixCapacity(ctx);
+  if (!capacity) return '';
+  const {last, max, least, unknown, none, low} = capacity;
+  const extras = [none.length ? t.noneOf(none.join(', ')) : '', low.length ? t.tooLittleOf(low.join(', ')) : ''];
+  if (max !== null && max < last) {
+    const line = [t.leastOf(least), ...extras, unknown.length ? t.withoutStock(unknown.join(', ')) : ''].filter(Boolean).join(' · ');
+    return strip({title:t.canMixUpTo(fmt.mass(max)), line, route:'stock', label:t.toStock});
+  }
+  if (none.length || low.length) return strip({title:t.additivesLow, line:extras.filter(Boolean).join(' · '), route:'stock', label:t.toStock});
+  if (unknown.length) {
+    const first = ctx.derived.stocks.find(row => !row.known && unknown.includes(row.ingredient.name));
+    return strip({title:t.stocksUnknown, line:unknown.join(', '), route:'movement/correction/' + first.ingredient.id,
+      label:t.enterShort, tone:'info'});
+  }
+  return '';
 }
 
 // Karta główna Startu: kiedy następne mieszanie, ile zostało, do kiedy starczy.
@@ -95,24 +129,10 @@ function nextMixHero(ctx) {
   const end = runOut(ctx);
   const gone = active.remaining <= 0;
   const value = gone ? figure(t.now) : !end ? '—' : end.days < .5 ? figure(t.today) : '<span class="approx">≈</span>' + figure(fmt.days(end.days));
-  const sides = [end && !gone ? side(t.until, fmt.shortDate(end.date, today)) : '', side(t.left, fmt.mass(remaining))].filter(Boolean);
+  const sides = [end && !gone ? side(t.lastsUntil, fmt.shortDate(end.date, today)) : '', side(t.left, fmt.mass(remaining))].filter(Boolean);
   const caption = [gone ? t.mixGone : '', openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : ''].filter(Boolean).join(' · ');
   const soon = gone || (end && end.days <= 3);
   return hero({label:t.nextMix, value, sides, bar:[remaining, base], caption, low:gone, route:'feed', after:soon ? mixButton : ''});
-}
-
-// Pasek tylko wtedy, gdy czegoś brakuje na następną partię albo nie wszystko jest wpisane.
-function needsStrip(ctx) {
-  const needs = nextBatchNeeds(ctx);
-  if (!needs) return '';
-  if (needs.missing.length) {
-    return strip({title:t.shortFor(fmt.mass(needs.mass)), line:needs.missing.join(' · '), route:'stock', label:t.toStock});
-  }
-  if (needs.unknown.length) {
-    return strip({title:t.stocksUnknown, line:needs.unknown.map(row => row.name).join(', '),
-      route:'movement/correction/' + needs.unknown[0].id, label:t.enterShort, tone:'info'});
-  }
-  return '';
 }
 
 function flockParts(counts) {
@@ -145,7 +165,8 @@ function costTile(ctx) {
   if (!current || !composition || !(model.daily > 0)) return '';
   const cost = mixtureCost([...composition.items, ...composition.additives]);
   if (cost.kind !== 'full') return '';
-  return tile({label:t.monthCost, value:figure(zloty(model.daily / 1000 * cost.perKg * 30), 'zł'), caption:t.fromPrices,
+  const free = [...composition.items, ...composition.additives].filter(item => item.free).map(item => item.name);
+  return tile({label:t.monthCost, value:figure(zloty(model.daily / 1000 * cost.perKg * 30), 'zł'), caption:t.fromPrices + freeNote(free),
     route:'recipe/' + current.id});
 }
 
@@ -210,9 +231,9 @@ function activeHero(ctx) {
   const remaining = Math.max(0, active.remaining);
   const end = runOut(ctx);
   const gone = active.remaining <= 0;
-  const sides = [end && !gone ? side(t.until, fmt.shortDate(end.date, today)) : '', side(t.dayWord, fmt.number(feedingDay(batch, today)))]
+  const sides = [end && !gone ? side(t.lastsUntil, fmt.shortDate(end.date, today)) : '', side('', fmt.number(feedingDay(batch, today)) + '.', t.feedingDayWord)]
     .filter(Boolean);
-  const caption = [t.mixedShort(fmt.listDate(batch.date, today)) + additivesLabel(batch), gone ? t.mixGone : '',
+  const caption = [t.mixedShort(fmt.listDate(batch.date, today)), additivesText(batch), gone ? t.mixGone : '',
     openStatus.length > 1 ? t.openBatches(openStatus.length - 1) : ''].filter(Boolean).join(' · ');
   return hero({label:t.inUse + ' · ' + batch.recipeName, value:figure(fmt.mass(remaining)) + '<span class="of">' + html(t.of(fmt.mass(base))) + '</span>',
     sides, bar:[remaining, base], caption, low:gone, route:'batch/' + batch.id,
@@ -246,23 +267,23 @@ function recipeRows(ctx) {
 }
 
 function batchRows(ctx) {
-  const {batches, current} = ctx.derived;
+  const {batches} = ctx.derived;
   const today = ctx.today;
   if (!batches.length) return '<div class="r-row"><small>' + html(t.noBatches) + '</small></div>';
   return batches.map(batch => {
     const finished = isFinished(batch, today);
     const planned = batch.start > today;
-    const other = current && batch.recipeName !== current.name ? batch.recipeName : '';
-    let title, sub;
+    let title, sub, tag = '';
     if (finished) {
       const result = batchResult(batch);
       title = batchRange(batch, today);
-      sub = [fmt.days(result.days), result.daily != null ? t.kgPerDay(fmt.number(result.daily / 1000, 1)) : '', other];
+      sub = [batch.recipeName, fmt.days(result.days), result.daily != null ? t.kgPerDay(fmt.number(result.daily / 1000, 1)) : ''];
     } else {
       title = t.fromDate(fmt.listDate(batch.start, today));
-      sub = [planned ? t.statusPlannedShort : t.statusOpenShort, planned ? '' : t.dayN(feedingDay(batch, today)), other];
+      tag = planned ? t.statusPlannedShort : t.statusOpenShort;
+      sub = [batch.recipeName, planned ? '' : t.feedingDayN(fmt.number(feedingDay(batch, today)))];
     }
-    return line({title, sub:html(sub.filter(Boolean).join(' · ')), value:html(fmt.mass(batchBaseMass(batch))), route:'batch/' + batch.id});
+    return line({title, tag, sub:html(sub.filter(Boolean).join(' · ')), value:html(fmt.mass(batchBaseMass(batch))), route:'batch/' + batch.id});
   }).join('');
 }
 
@@ -282,13 +303,15 @@ export function feed(ctx) {
 }
 
 // Kafelki kosztu: partia albo receptura (na 100 kg).
-function costTiles(cost, settings, {batch = false, consumed = 0} = {}) {
+const freeNote = names => names.length ? ' · ' + t.freeOf(names.join(', ')) : '';
+
+function costTiles(cost, settings, {batch = false, consumed = 0, free = []} = {}) {
   if (cost.kind === 'none') return '';
   if (cost.kind === 'partial') return strip({title:t.cost, line:t.costPartial, tone:'info'});
   const tiles = [];
   const ready = settings.readyPrice;
-  if (batch) tiles.push(tile({label:t.costBatch, value:figure(zloty(cost.cents), 'zł'), caption:perKg(cost.perKg)}));
-  else tiles.push(tile({label:t.cost100, value:figure(zloty(cost.perKg * 100), 'zł'), caption:perKg(cost.perKg)}));
+  if (batch) tiles.push(tile({label:t.costBatch, value:figure(zloty(cost.cents), 'zł'), caption:perKg(cost.perKg) + freeNote(free)}));
+  else tiles.push(tile({label:t.cost100, value:figure(zloty(cost.perKg * 100), 'zł'), caption:perKg(cost.perKg) + freeNote(free)}));
   if (ready !== null) {
     const mass = batch ? consumed : 100000;
     if (mass > 0) {
@@ -318,7 +341,7 @@ export function recipeView(ctx, id) {
       sides:cost.kind === 'full' ? [side('', perKg(cost.perKg))] : [], after:`<div class="hero-action">${link(t.mix, 'mix/' + id, 'filled', 'plus')}</div>`})}
     ${recipe.notes ? '<section class="card"><p class="notes">' + html(recipe.notes) + '</p></section>' : ''}
     ${listCard(t.composition100, rows)}
-    ${costTiles(cost, ctx.derived.settings)}
+    ${costTiles(cost, ctx.derived.settings, {free:[...composition.items, ...composition.additives].filter(item => item.free).map(item => item.name)})}
     ${extra ? '<div class="actions">' + extra + '</div>' : ''}</div>`,
     action: action => { if (action === 'current') return ctx.commit(data => ctx.setCurrent(data, id)); }};
 }
@@ -336,16 +359,16 @@ export function batchView(ctx, id, fromEventId) {
   if (result.finished) {
     label = t.statusFinished + ' · ' + batchRange(batch, today);
     value = figure(fmt.days(result.days));
-    sides = [side('', fmt.mass(base)), additivesLabel(batch) ? '<span>' + html(additivesLabel(batch).trim()) + '</span>' : ''];
+    sides = [side('', fmt.mass(base)), additivesText(batch) ? '<span>' + html(additivesText(batch)) + '</span>' : ''];
   } else {
     const left = Math.max(0, result.remaining ?? base);
     label = (planned ? t.statusPlanned : t.statusOpen) + ' · ' + t.fromDate(fmt.listDate(batch.start, today));
     value = figure(fmt.mass(left)) + '<span class="of">' + html(t.of(fmt.mass(base))) + '</span>';
-    sides = planned ? [] : [side(t.dayWord, fmt.number(feedingDay(batch, today)))];
+    sides = planned ? [] : [side('', fmt.number(feedingDay(batch, today)) + '.', t.feedingDayWord)];
     bar = [left, base];
   }
   const leftover = result.finished && result.remaining > 0 ? t.leftoverShort(fmt.mass(result.remaining)) : '';
-  const caption = [t.mixedShort(fmt.listDate(batch.date, today)) + (result.finished ? '' : additivesLabel(batch)), leftover].filter(Boolean).join(' · ');
+  const caption = [t.mixedShort(fmt.listDate(batch.date, today)), result.finished ? '' : additivesText(batch), leftover].filter(Boolean).join(' · ');
   const tiles = result.daily != null ? tile({label:t.dailyTile, value:figure(fmt.number(result.daily / 1000, 1), 'kg'),
     caption:result.birds > 0 ? t.perBirdShort(fmt.number(result.daily / result.birds, 0)) : ''}) : '';
   const items = batch.items.map(item => {
@@ -357,7 +380,7 @@ export function batchView(ctx, id, fromEventId) {
   return {title:t.batch, subtitle:batch.recipeName, parent, edit:'batch-form/' + id, body:`<div class="stack">
     ${hero({label, value, sides:sides.filter(Boolean), bar, caption})}
     ${tiles ? '<div class="tiles">' + tiles + '</div>' : ''}
-    ${costTiles(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed})}
+    ${costTiles(result.cost, ctx.derived.settings, {batch:true, consumed:result.consumed, free:result.freeItems})}
     ${listCard(t.batchContent, items)}
     <div class="actions">${link(result.finished ? t.changeFinish : t.finishBatch, 'finish/' + id + '/batch', 'tonal')}</div>
     </div>`};
@@ -371,7 +394,7 @@ function stockLine(ctx, {ingredient, grams, known, outlook}) {
   const {settings} = ctx.derived;
   const low = (known && grams < 0) || (outlook && outlook.days < settings.threshold);
   const notes = [];
-  if (outlook) notes.push(`${low ? icon('warn') : ''}<em>${html(fmt.days(outlook.days))}</em> · ${html(t.until + ' ' + fmt.shortDate(outlook.date, ctx.today))}`);
+  if (outlook) notes.push(`${low ? icon('warn') : ''}<em>${html(fmt.days(outlook.days))}</em> · ${html(t.lastsUntil + ' ' + fmt.shortDate(outlook.date, ctx.today))}`);
   if (!known) notes.push(html(t.enterStockShort));
   else if (grams < 0) notes.push(html(t.checkStockShort));
   else if (!outlook) notes.push(html(t.outsideRecipe));
@@ -414,8 +437,9 @@ export function ingredientView(ctx, id) {
   const caption = [!known ? t.enterStockShort : grams < 0 ? t.checkStockShort : '',
     rate != null ? t.inEvery100(fmt.precise(showAmount(rate * 100000, ingredient), ingredient.unit)) : t.outsideRecipe,
     isAdditive(ingredient) ? t.additiveShort : '',
-    ingredient.price ? t.lastPriceShort(formatRate(ingredient.price, ingredient)) : ''].filter(Boolean).join(' · ');
-  const sides = outlook ? [side('', fmt.days(outlook.days)), side(t.until, fmt.shortDate(outlook.date, ctx.today))] : [];
+    isOwn(ingredient) ? (ingredient.ownPrice ? t.ownWorth(formatRate(ingredient.ownPrice, ingredient)) : t.ownFree)
+      : ingredient.price ? t.lastPriceShort(formatRate(ingredient.price, ingredient)) : ''].filter(Boolean).join(' · ');
+  const sides = outlook ? [side('', fmt.days(outlook.days)), side(t.lastsUntil, fmt.shortDate(outlook.date, ctx.today))] : [];
   const history = events.map(event => {
     const batch = event.batchId && find(ctx.data, 'batches', event.batchId);
     const price = event.price && event.priceMode !== 'total' ? fmt.money(event.price.cents * 1000 / event.price.grams) + t.perKgSuffix : '';
@@ -427,8 +451,8 @@ export function ingredientView(ctx, id) {
   return {title:ingredient.name, parent:'stock', edit:'ingredient-form/' + id, body:`<div class="stack">
     ${hero({label:t.stockLabel, value:known ? figure(amount(grams, ingredient)) : '—', sides, low,
       bar:outlook ? [Math.min(outlook.days, HORIZON), HORIZON] : null, caption})}
-    <div class="chip-row">${link(t.add, 'movement/add/' + id, 'tonal', 'plus')}${link(t.correctionShort, 'movement/correction/' + id, 'chip')}
-      ${link(t.withdrawalShort, 'movement/withdrawal/' + id, 'chip')}</div>
+    <div class="chip-row">${known ? link(t.add, 'movement/add/' + id, 'tonal', 'plus') + link(t.correctionShort, 'movement/correction/' + id, 'chip') +
+      link(t.withdrawalShort, 'movement/withdrawal/' + id, 'chip') : link(t.enterState, 'movement/correction/' + id, 'tonal', 'plus')}</div>
     ${outlook ? needTiles(ctx, item) : ''}
     ${listCard(t.history, history || '<div class="r-row"><small>' + html(t.noHistory) + '</small></div>')}</div>`};
 }

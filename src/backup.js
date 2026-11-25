@@ -15,7 +15,7 @@ const id = value => typeof value === 'string' && /^[\da-f]{8}-[\da-f]{4}-[\da-f]
 const date = value => typeof value === 'string' && validDate(value);
 const timestamp = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
   Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-const price = value => value === null || (value && int(value.cents,1) && int(value.grams,1));
+const price = value => value === null || (value && int(value.cents,0) && int(value.grams,1));
 const units = row => row.unit === 'kg' ? row.density === null : row.unit === 'l' && decimal(row.density,.001,100);
 const optionalDate = value => value === null || date(value);
 const own = (map,key) => Object.hasOwn(map,key);
@@ -54,7 +54,7 @@ function decodeData(source) {
   const activeIngredients = new Set(live(data.ingredients).map(row => row.id));
   const activeBatches = new Set(live(data.batches).map(row => row.id));
   const cohorts = new Map(data.cohorts.map(row => [row.id,row]));
-  requireThat(data.ingredients.every(row => name(row.name) && units(row) && price(row.price) &&
+  requireThat(data.ingredients.every(row => name(row.name) && units(row) && price(row.price) && price(row.ownPrice ?? null) &&
     (row.kind === undefined || ['base','additive'].includes(row.kind)) &&
     (row.lastSource === undefined || ['purchase','addition'].includes(row.lastSource)) &&
     (row.oil == null || (typeof row.oil === 'boolean' && (!row.oil || row.unit === 'l')))));

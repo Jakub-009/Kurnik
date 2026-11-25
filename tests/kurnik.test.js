@@ -17,7 +17,7 @@ const names = ['Pszenica', 'Kukurydza', 'Śruta sojowa', 'Groch', 'Kreda', 'Dolm
 // Receptura z olejem jako dodatkiem (stan po wersji 1.5).
 const fixture = (oilKind = 'additive') => {
   const ingredients = names.map((name, i) => record({name, unit:i === 6 ? 'l' : 'kg', density:i === 6 ? .92 : null,
-    price:null, kind:i === 6 ? oilKind : 'base'}));
+    price:null, kind:i === 6 ? oilKind : 'base', origin:'bought', ownPrice:null}));
   const recipe = record({name:'Podstawowa', items:ingredients.map((row, i) => ({ingredientId:row.id, amount:amounts[i]})),
     current:true, notes:''});
   const data = {ingredients, recipes:[recipe], batches:[], ingredientEvents:[], cohorts:[], cohortChanges:[],
@@ -158,7 +158,7 @@ test('T16 – domyślna masa: ostatnia partia 75 kg → „Inna” z 75; bez par
   assert.match(body, /aria-pressed="true" data-action="mass:100000"/);
   const items = scaleBatch(recipeComposition(recipe, ingredients), 75000);
   putBatch(data, null, {recipeId:recipe.id, recipeName:recipe.name, date:today, start:today, end:null, remaining:null,
-    mass:75000, massBasis:'base', items:items.map(({position, share, amount, additive, ...item}) => additive ? {...item, additive} : item)});
+    mass:75000, massBasis:'base', items:items.map(({position, share, amount, additive, free, ...item}) => additive ? {...item, additive} : item)});
   assert.equal(lastBatchMass(data.batches), 75000);
   body = mixForm(ctxOf(data), 'mix').body;
   assert.match(body, /aria-pressed="true" data-action="mass:other"/);
@@ -227,7 +227,7 @@ test('T19 – migracja dodatków: stary „Olej” (oil: true) staje się dodatk
   assert.equal(batchBaseMass(restored.batches[0]), 50000);
   near(batchResult(restored.batches[0]).consumed, 50000);
   const body = batchView(ctxOf(restored), oldBatch.id).body;
-  assert.match(body, /<b>50 kg<\/b>[\s\S]*\+ 1,3 l oleju/);
+  assert.match(body, /<b>50 kg<\/b>[\s\S]*dodano 1,3 l oleju/);
   assert.match(body, /1,25 l/);
 });
 
@@ -330,7 +330,7 @@ test('Start „co dalej”: następne mieszanie, 3 kończące się składniki, s
   assert.match(screen.body, /Następne mieszanie[\s\S]*≈<\/span>5<span class="unit">dni/);
   assert.match(screen.body, /zostało <b>19 kg<\/b>/);
   assert.doesNotMatch(screen.body, /około|ok\./);
-  assert.match(screen.body, /Brakuje na 50 kg[\s\S]*Śruta sojowa 6 kg/);
+  assert.match(screen.body, /Ze stanu zmieszasz do 24 kg[\s\S]*najmniej: Śruta sojowa/);
   assert.match(screen.body, /Zapasy[\s\S]*Śruta sojowa/);
   assert.equal((screen.body.match(/class="supply-row/g) ?? []).length, 3);
   assert.match(screen.body, /Kury[\s\S]*>30<span class="unit">szt\.[\s\S]*26 kur · 4 koguty/);
@@ -370,7 +370,7 @@ test('bez stada prognoza liczy kg dziennie, dziś jako pół dnia; rocznik z pó
   assert.equal(derived.model.perBird, null);
   near(derived.active.remaining, 50000 - 8.5 * 3700);
   const body = feed(ctxOf(data, '2026-11-23')).body;
-  assert.match(body, /W użyciu · P[\s\S]*19<span class="unit">kg<\/span><span class="of">z 50 kg[\s\S]*dzień <b>9<\/b>/);
+  assert.match(body, /W użyciu · P[\s\S]*19<span class="unit">kg<\/span><span class="of">z 50 kg[\s\S]*<b>9\.<\/b> dzień karmienia/);
   assert.match(body, /3,7<span class="unit">kg[\s\S]*wg Ustawień/);
   assert.doesNotMatch(body, /około|ok\./);
   data.cohorts.push(record({name:'Kury', date:'2026-11-23', dateKind:'purchase', weeks:null, hens:25, roosters:0, rearing:null, mark:'', notes:''}));
@@ -509,4 +509,73 @@ test('klucie → pisklęta → mieszanka od wybranego dnia → przeniesienie do 
   assert.deepEqual(restored.cohorts, data.cohorts);
   assert.equal(JSON.parse(encodeBackup(data, today)).version, 5);
   void recipe;
+});
+
+test('składnik własny: koszt receptury liczy się (0 zł), z dopiskiem; pochodzenie z ostatniego dodania', () => {
+  const {data, ingredients, recipe} = fixture();
+  ingredients.forEach((row, i) => { row.price = {cents:100 + i * 10, grams:1000}; });
+  const nettle = record({name:'Pokrzywa', unit:'kg', density:null, price:null, kind:'base', lastSource:'addition'});
+  data.ingredients.push(nettle);
+  recipe.items.push({ingredientId:nettle.id, amount:500});
+  normalizeData(data);
+  assert.equal(nettle.origin, 'own');
+  assert.equal(ingredients[0].origin, 'bought');
+  const body = recipeView(ctxOf(data), recipe.id).body;
+  assert.doesNotMatch(body, /Nie wszystkie składniki mają cenę/);
+  assert.match(body, /Koszt 100 kg[\s\S]*bez kosztu: Pokrzywa/);
+  nettle.ownPrice = {cents:50, grams:1000};
+  assert.doesNotMatch(recipeView(ctxOf(data), recipe.id).body, /bez kosztu/);
+  assert.match(ingredientView(ctxOf(data), nettle.id).body, /własny, liczony 0,50\szł\/kg/);
+});
+
+test('pierwszy wpis stanu: bez stanu jest „Wpisz stan”, a nie „Dodaj”; ogólne „Dodaj na stan” ostrzega', () => {
+  const {data, ingredients, recipe} = fixture();
+  const items = scaleBatch(recipeComposition(recipe, ingredients), 50000);
+  putBatch(data, null, {recipeId:recipe.id, recipeName:recipe.name, date:'2026-11-15', start:'2026-11-15', end:null, remaining:null,
+    mass:50000, massBasis:'base', items:items.map(({position, share, amount, additive, free, ...item}) => additive ? {...item, additive} : item)});
+  const dolmix = ingredients[5];
+  const page = ingredientView(ctxOf(data), dolmix.id).body;
+  assert.match(page, /href="#movement\/correction\/[^"]+"[^>]*>[\s\S]*Wpisz stan/);
+  assert.doesNotMatch(page, /href="#movement\/add\//);
+  const correction = movementForm(ctxOf(data), 'correction', dolmix.id);
+  assert.equal(correction.title, 'Wpisz stan');
+  assert.match(correction.body, /Ile masz/);
+  assert.match(movementForm(ctxOf(data), 'add', dolmix.id).body, /Ten składnik nie ma jeszcze stanu/);
+  data.ingredientEvents.push(record({ingredientId:dolmix.id, type:'purchase', grams:5000, date:today, price:null, batchId:null, notes:''}));
+  assert.equal(movementForm(ctxOf(data), 'correction', dolmix.id).title, 'Korekta stanu');
+  assert.doesNotMatch(movementForm(ctxOf(data), 'add', dolmix.id).body, /nie ma jeszcze stanu/);
+});
+
+test('ile da się zmieszać: najmniejszy składnik ogranicza masę, olej (dodatek) i składniki bez stanu – osobno', () => {
+  const {data, ingredients, recipe} = fixture();
+  const composition = recipeComposition(recipe, ingredients);
+  const add = (i, grams) => data.ingredientEvents.push(record({ingredientId:ingredients[i].id, type:'correction', grams, measured:grams,
+    date:today, price:null, batchId:null, notes:''}));
+  // Wszystkiego na 200 kg poza śrutą (na ~62 kg), olej 0 l, groch bez stanu.
+  [0, 1, 4, 5].forEach(i => add(i, Math.ceil(composition.items.find(item => item.ingredientId === ingredients[i].id).share * 200000)));
+  add(2, Math.round(composition.items.find(item => item.ingredientId === ingredients[2].id).share * 62500));
+  add(6, 0);
+  const body = start(ctxOf(data)).body;
+  assert.match(body, /Ze stanu zmieszasz do 62 kg[\s\S]*najmniej: Śruta sojowa · brak: Olej · bez stanu: Groch/);
+  assert.doesNotMatch(body, /Brakuje na/);
+  // W formularzu mieszania przy 100 kg: dopisek przy śrucie i oleju.
+  const mix = mixForm(ctxOf(data), 'mix').body;
+  assert.match(mix, /Śruta sojowa<small class="short-note">[\s\S]*?brakuje 7,\d+ kg/);
+  assert.match(mix, /Olej <small class="tag">Dodatek<\/small><small class="short-note">[\s\S]*?brak w magazynie/);
+  assert.doesNotMatch(mix, /Pszenica<small class="short-note">/);
+});
+
+test('lista partii: daty w tytule, status jako znacznik, receptura zawsze na początku', () => {
+  const {data, ingredients, recipe} = fixture();
+  const items = scaleBatch(recipeComposition(recipe, ingredients), 50000)
+    .map(({position, share, amount, additive, free, ...item}) => additive ? {...item, additive} : item);
+  putBatch(data, null, {recipeId:recipe.id, recipeName:recipe.name, date:'2026-10-01', start:'2026-10-01', end:'2026-10-21', remaining:0,
+    mass:50000, massBasis:'base', items});
+  putBatch(data, null, {recipeId:recipe.id, recipeName:recipe.name, date:'2026-11-12', start:'2026-11-12', end:null, remaining:null,
+    mass:50000, massBasis:'base', items});
+  const body = feed(ctxOf(data)).body;
+  assert.match(body, /od 12\.11 <span class="tag">w użyciu<\/span>[\s\S]*Podstawowa · 11\. dzień karmienia/);
+  assert.match(body, /01\.10 – 20\.10<\/b>[\s\S]*Podstawowa · 20 dni/);
+  assert.match(body, /wystarczy do <b>/);
+  assert.match(body, /zmieszana 12\.11 · dodano 1 l oleju/);
 });

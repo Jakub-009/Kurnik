@@ -245,3 +245,10 @@ a.tile:active, a.hero-link:active, .supply-row:active { opacity: .7; }
 .hero-buttons .button .icon { width: 20px; height: 20px; flex-basis: 20px; }
 dialog { border-radius: 20px; background: #FFFFFF; }
 .error-panel { border-radius: 12px; }
+
+/* Znacznik statusu przy tytule wiersza, dopisek „brakuje” w mieszaniu, blokada zaznaczania tekstu. */
+.r-row b .tag { display: inline-flex; margin: 0 0 0 6px; vertical-align: 2px; font-size: .75rem; font-weight: 600; }
+.short-note { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: .8125rem; font-weight: 600; color: var(--md-sys-color-tertiary); text-decoration: none; }
+.short-note .icon { width: 15px; height: 15px; flex-basis: 15px; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+input, textarea, select, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }

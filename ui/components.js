@@ -65,8 +65,8 @@ export const listCard = (title, rows, action = '') =>
 export const headLink = (label, route) => `<a class="mini-link" href="#${html(route)}">${icon('plus')}${html(label)}</a>`;
 
 // Wiersz listy: tytuł, szary podpis, wartość po prawej. `sub` i `value` to gotowy HTML.
-export function line({title, sub = '', value = '', route = '', strong = true, plus = false, after = ''}) {
-  const content = `<span class="grow"><b${strong ? '' : ' class="plain"'}>${html(title)}</b>${sub ? '<small>' + sub + '</small>' : ''}</span>
+export function line({title, sub = '', value = '', route = '', strong = true, plus = false, after = '', tag = ''}) {
+  const content = `<span class="grow"><b${strong ? '' : ' class="plain"'}>${html(title)}${tag ? ' <span class="tag">' + html(tag) + '</span>' : ''}</b>${sub ? '<small>' + sub + '</small>' : ''}</span>
     ${after}${value ? `<span class="r-val${plus ? ' plus' : ''}">${value}</span>` : ''}${route ? icon('next') : ''}`;
   return route ? `<a class="r-row" href="#${html(route)}">${content}</a>` : `<div class="r-row">${content}</div>`;
 }

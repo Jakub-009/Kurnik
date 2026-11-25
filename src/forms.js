@@ -4,7 +4,7 @@ import {live, record} from './db.js';
 import {find, isFinished, put, putBatch, remove, removeBatch, removeRecipe, showAmount} from './model.js';
 import {missing} from './views.js';
 import {button, changeRow, choice, chosen, dateField, empty, field, FieldError, figure, form, html, iconButton,
-  link, numberField, readDate, readName, readNumber, select, textarea, tile} from '../ui/components.js';
+  link, numberField, readDate, readName, readNumber, select, strip, textarea, tile} from '../ui/components.js';
 import * as fmt from '../ui/format.js';
 import {icon} from '../ui/icons.js';
 import {t} from '../ui/texts.js';
@@ -20,6 +20,7 @@ const priceInput = (name, label, initial) => field(name, label, asInput(initial,
 const normalize = name => name.trim().toLocaleLowerCase('pl');
 const get = (ctx, store, id) => find(ctx.data, store, id);
 const kindOptions = [['base', t.kindBase], ['additive', t.kindAdditive]];
+const originOptions = [['bought', t.originBought], ['own', t.originOwn]];
 
 function physicalMass(amount, ingredient, fieldName) {
   try { return ingredientMass(Math.round(amount * 1000), ingredient.unit, ingredient.density); }
@@ -31,12 +32,24 @@ function ingredientFields(prefix, item) {
     ${select(prefix + 'unit', t.unit, [['kg', 'kg'], ['l', 'l']], item?.unit ?? 'kg')}
     <div id="${prefix}density-wrap"${item?.unit !== 'l' ? ' hidden' : ''}>
       ${field(prefix + 'density', t.density, asInput(item?.density), {mode:'decimal'})}</div>
-    ${choice(prefix + 'kind', t.kind, kindOptions, item && isAdditive(item) ? 'additive' : 'base')}`;
+    ${choice(prefix + 'kind', t.kind, kindOptions, item && isAdditive(item) ? 'additive' : 'base')}
+    ${choice(prefix + 'origin', t.origin, originOptions, item?.origin === 'own' ? 'own' : 'bought')}
+    <div class="stack tight" id="${prefix}own-wrap"${item?.origin === 'own' ? '' : ' hidden'}>
+      ${priceInput(prefix + 'own-price', t.ownValue(item?.unit ?? 'kg'), ownValueShown(item))}
+      <p class="muted">${t.ownValueHint}</p></div>`;
+}
+
+// Wartość składnika własnego w zł za jednostkę (kg albo l); puste = 0 zł.
+function ownValueShown(item) {
+  if (!item?.ownPrice) return null;
+  return item.ownPrice.cents / 100 * (item.unit === 'l' ? item.density * 1000 : 1000) / item.ownPrice.grams;
 }
 
 function updateIngredientFields(prefix, target) {
+  if (target.name === prefix + 'origin') document.getElementById(prefix + 'own-wrap').hidden = target.value !== 'own';
   if (target.id !== prefix + 'unit') return;
   document.getElementById(prefix + 'density-wrap').hidden = target.value !== 'l';
+  document.querySelector('label[for="' + prefix + 'own-price"]').textContent = t.ownValue(target.value);
 }
 
 function ingredientValues(prefix, ingredients, id, lockedUnit) {
@@ -47,7 +60,11 @@ function ingredientValues(prefix, ingredients, id, lockedUnit) {
   const unit = value(prefix + 'unit');
   if (lockedUnit && unit !== lockedUnit) throw new FieldError(prefix + 'unit', t.unitLocked);
   const density = unit === 'l' ? readNumber(value(prefix + 'density'), prefix + 'density', {min:.001, max:100}) : null;
-  return {name, unit, density, kind:chosen(prefix + 'kind') ?? 'base'};
+  const origin = chosen(prefix + 'origin') ?? 'bought';
+  const entered = origin === 'own'
+    ? readNumber(value(prefix + 'own-price'), prefix + 'own-price', {optional:true, min:0, max:100000, digits:2}) : null;
+  const ownPrice = entered === null ? null : {cents:Math.round(entered * 100), grams:unit === 'l' ? Math.round(density * 1000) : 1000};
+  return {name, unit, density, kind:chosen(prefix + 'kind') ?? 'base', origin, ownPrice};
 }
 
 export function ingredientForm(ctx, id) {
@@ -306,7 +323,14 @@ export function movementForm(ctx, type, ingredientId, eventId) {
   const canPrice = type === 'purchase' || add;
   const selection = ctx.derived.ingredients.slice().sort((a, b) => a.name.localeCompare(b.name, 'pl'));
   let date = old?.date ?? ctx.today;
-  let source = add ? ingredient.lastSource ?? 'purchase' : type;
+  const defaultSource = row => row.lastSource ?? (row.origin === 'own' ? 'addition' : 'purchase');
+  let source = add ? defaultSource(ingredient) : type;
+  // Składnik bez żadnego wpisanego stanu: pierwszy wpis to „Wpisz stan” (zważona ilość na dany dzień),
+  // bo zwykłe „Dodaj” dopisałoby ilość do stanu pomniejszonego o wcześniejsze partie.
+  const unknown = row => !ctx.derived.stocks.find(entry => entry.ingredient.id === row.id)?.known;
+  const first = correction && !old && unknown(ingredient);
+  const firstNote = row => add && !old && unknown(row)
+    ? strip({title:t.firstEntryTitle, line:t.firstEntryLine, route:'movement/correction/' + row.id, label:t.enterStateShort, tone:'info'}) : '';
   const currentStock = () => {
     if (!correction) return stock(ctx.data.ingredientEvents, ingredient.id, old?.id);
     const earlier = ctx.data.ingredientEvents.filter(event => event.date < date ||
@@ -342,12 +366,14 @@ export function movementForm(ctx, type, ingredientId, eventId) {
   };
   const sourceChoice = () => choice('source', t.source, [['purchase', t.sourcePurchase], ['addition', t.sourceOwn]], source);
 
-  return {title:movementTitles[type], subtitle:ingredientId ? ingredient.name : '', parent, form:true,
+  return {title:first ? t.enterState : movementTitles[type], subtitle:ingredientId ? ingredient.name : '', parent, form:true,
     body:form(`${ingredientId ? '' : select('ingredient', t.ingredient, selection.map(row => [row.id, row.name]), ingredient.id)}
+      ${add ? '<div id="first-entry">' + firstNote(ingredient) + '</div>' : ''}
       ${add ? '<div id="source-wrap">' + sourceChoice() + '</div>' : ''}
-      ${correction ? '<p>' + t.shouldBe + ' <strong id="calculated-stock">' + signed(currentStock(), false) + '</strong></p>' : ''}
-      ${numberField('quantity', correction ? t.howMuchReally : t.quantity, asInput(initialAmount), ingredient.unit)}
-      ${correction ? '<p id="difference" role="status">' + (old ? t.difference(signed(old.grams)) : '') + '</p>' : ''}
+      ${correction ? `<p${first ? ' hidden' : ''}>${t.shouldBe} <strong id="calculated-stock">${signed(currentStock(), false)}</strong></p>` : ''}
+      ${first ? '<p class="muted">' + t.firstStateHint + '</p>' : ''}
+      ${numberField('quantity', first ? t.howMuchNow : correction ? t.howMuchReally : t.quantity, asInput(initialAmount), ingredient.unit)}
+      ${correction ? `<p id="difference" role="status"${first ? ' hidden' : ''}>${old ? t.difference(signed(old.grams)) : ''}</p>` : ''}
       ${canPrice ? `<div id="purchase-fields"${source === 'purchase' ? '' : ' hidden'}>${priceBlock(ingredient, defaultMode)}</div>` : ''}
       ${changeRow(t.date, fmt.fullDate(date), 'date')}
       <div id="date-wrap" hidden>${dateInput(ctx, 'date', t.date, date)}</div>
@@ -362,7 +388,8 @@ export function movementForm(ctx, type, ingredientId, eventId) {
         ingredient = get(ctx, 'ingredients', target.value);
         document.querySelector('[data-unit-for="quantity"]').textContent = ingredient.unit;
         if (add) {
-          source = ingredient.lastSource ?? 'purchase';
+          source = defaultSource(ingredient);
+          document.getElementById('first-entry').innerHTML = firstNote(ingredient);
           document.getElementById('source-wrap').innerHTML = sourceChoice();
           document.getElementById('purchase-fields').hidden = source !== 'purchase';
         }
@@ -491,10 +518,20 @@ export function mixForm(ctx, name, id, origin) {
       <div class="actions">${button(t.applyAmount, 'apply-quantity', 'tonal', 'check')}${button(t.cancel, 'cancel-quantity', 'text')}</div></div>`;
   }
 
+  // Przy nowej partii: ile brakuje w magazynie do tej ilości. Nie blokuje zapisu – możesz mieć niewpisany towar.
+  const stockById = new Map(ctx.derived.stocks.map(entry => [entry.ingredient.id, entry]));
+  function shortNote(item) {
+    const entry = stockById.get(item.ingredientId);
+    if (editing || !entry?.known || entry.grams >= item.grams) return '';
+    const missingGrams = item.grams - Math.max(0, entry.grams);
+    const text = fmt.quantity(showAmount(missingGrams, entry.ingredient), entry.ingredient.unit, true);
+    return `<small class="short-note">${icon('warn')}${html(entry.grams <= 0 ? t.noneInStock : t.missingAmount(text))}</small>`;
+  }
+
   function checkList() {
     return items.map((item, index) => {
       const amount = fmt.mixingQuantity(shown(item), item.unit);
-      const label = html(item.name) + (extra(item) ? ' <small class="tag">' + t.additive + '</small>' : '');
+      const label = html(item.name) + (extra(item) ? ' <small class="tag">' + t.additive + '</small>' : '') + shortNote(item);
       return `<div class="checklist-row">
         ${editing ? '<span class="grow">' + label + '</span>' :
           `<label for="check-${index}"><input id="check-${index}" type="checkbox" data-check="${index}" ${selected.has(index) ? 'checked' : ''}><span>${label}</span></label>`}

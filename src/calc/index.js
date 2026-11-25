@@ -28,6 +28,13 @@ export function isAdditive(ingredient) {
   return ingredient.unit === 'l' && (ingredient.oil ?? /^olej(?:\s|$)/iu.test(ingredient.name.trim()));
 }
 
+// Cena do liczenia kosztu: kupowany – ostatnia cena zakupu; własny – wpisana wartość albo 0 zł.
+export const isOwn = ingredient => ingredient?.origin === 'own';
+export function costPrice(ingredient) {
+  if (!ingredient) return null;
+  return isOwn(ingredient) ? ingredient.ownPrice ?? {cents:0, grams:1000} : ingredient.price ?? null;
+}
+
 export function recipeBaseItems(recipe, ingredients) {
   return recipe.items.filter(item => {
     const ingredient = ingredients.find(row => row.id === item.ingredientId);
@@ -42,7 +49,8 @@ export function recipeComposition(recipe, ingredients) {
     const ingredient = ingredients.find(row => row.id === ingredientId);
     if (!ingredient) throw new RangeError(t.ingredientMissing);
     return {ingredientId, amount, position, name: ingredient.name, unit: ingredient.unit,
-      density: ingredient.density, price: ingredient.price, additive: isAdditive(ingredient),
+      density: ingredient.density, price: costPrice(ingredient), free: isOwn(ingredient) && !ingredient.ownPrice,
+      additive: isAdditive(ingredient),
       grams: ingredientMass(amount, ingredient.unit, ingredient.density)};
   });
   const base = positions.filter(item => !item.additive);

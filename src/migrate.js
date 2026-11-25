@@ -6,6 +6,9 @@ import {t} from '../ui/texts.js';
 export function normalizeData(data) {
   for (const ingredient of data.ingredients) {
     if (ingredient.kind === undefined) ingredient.kind = isAdditive(ingredient) ? 'additive' : 'base';
+    // Pochodzenie: przy pierwszym uruchomieniu bierzemy je z ostatniego dodania (Zakup / Własny).
+    if (ingredient.origin === undefined) ingredient.origin = ingredient.lastSource === 'addition' ? 'own' : 'bought';
+    if (ingredient.ownPrice === undefined) ingredient.ownPrice = null;
     delete ingredient.oil;
   }
   // Stare roczniki miały jedną kategorię i jedną liczbę. Teraz kury i koguty są osobno w jednym roczniku.

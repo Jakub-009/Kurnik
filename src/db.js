@@ -11,7 +11,7 @@ export const record = fields => ({
 function initialData() {
   const ingredients = t.starterIngredients
     .map((name, i) => record({name, unit: i === 6 ? 'l' : 'kg', density: i === 6 ? 0.92 : null, price: null,
-      kind: i === 6 ? 'additive' : 'base'}));
+      kind: i === 6 ? 'additive' : 'base', origin: 'bought', ownPrice: null}));
   const amounts = [17000, 13000, 10000, 5000, 3250, 1250, 1000];
   return {
     ingredients, ingredientEvents: [], batches: [], cohorts: [], cohortChanges: [],

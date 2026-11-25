@@ -1,6 +1,6 @@
 import {live, record} from './db.js';
 import {addDays, averageFlock, batchBaseMass, batchResult, baseShare, cohortStage, dayNumber, exhaustPoint, feedModel, flockCount,
-  mixtureCost, nowPoint, recipeComposition, stock, supplyForecast} from './calc/index.js';
+  costPrice, isOwn, mixtureCost, nowPoint, recipeComposition, stock, supplyForecast} from './calc/index.js';
 
 export const latestFirst = (a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
 export const recipeOrder = (a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name, 'pl');
@@ -108,6 +108,12 @@ export function batchStats(batch, data, derived, today) {
   };
   const until = finished ? batch.end : today;
   const birds = result.daily == null ? 0 : averageFlock(data.cohorts, data.cohortChanges, batch.start, until);
-  return {...result, finished, birds, cost:mixtureCost(batch.items),
+  // Partie zapisane, zanim składnik oznaczono jako własny, nie mają jego ceny – bierzemy ją ze składnika.
+  const items = batch.items.map(item => {
+    if (item.price) return item;
+    const ingredient = data.ingredients.find(row => row.id === item.ingredientId);
+    return isOwn(ingredient) ? {...item, price:costPrice(ingredient), free:!ingredient.ownPrice} : item;
+  });
+  return {...result, finished, birds, cost:mixtureCost(items), freeItems:items.filter(item => item.free).map(item => item.name),
     remaining: finished ? batch.remaining * baseShare(batch) : open?.remaining};
 }
