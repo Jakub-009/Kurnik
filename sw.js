@@ -1,9 +1,10 @@
-const VERSION = '1.9.0';
+const VERSION = '1.9.1';
 const CACHE_PREFIX = 'kurnik:' + self.registration.scope + ':';
 const CACHE = CACHE_PREFIX + VERSION;
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './styles/tokens.css', './styles/components.css', './styles/app.css',
+  './fonts/google-sans-latin-wght-normal.woff2', './fonts/google-sans-latin-ext-wght-normal.woff2',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
   './ui/components.js', './ui/format.js', './ui/icons.js', './ui/texts.js',
   './src/app.js', './src/backup.js', './src/migrate.js', './src/db.js', './src/model.js',

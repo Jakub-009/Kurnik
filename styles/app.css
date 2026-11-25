@@ -1,7 +1,7 @@
 :root { --page-width: 720px; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: Roboto, system-ui, sans-serif; }
+html { background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: var(--font); }
 body { margin: 0; font-variant-numeric: tabular-nums; line-height: 1.5; }
 button, input, select, textarea { font: inherit; }
 button, label:has(input[type="checkbox"]) { cursor: pointer; }
@@ -13,7 +13,7 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 h1 { font-weight: 700; font-size: 1.375rem; line-height: 1.27; letter-spacing: -.01em; }
 h2, h3, dt { font-size: 1rem; line-height: 1.5; font-weight: 500; }
 small, .muted, .eyebrow { font-size: .875rem; color: var(--md-sys-color-on-surface-variant); }
-.display { color: var(--md-sys-color-primary); font: 400 var(--md-sys-typescale-display-small) Roboto, system-ui, sans-serif; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.display { color: var(--md-sys-color-primary); font: 400 var(--md-sys-typescale-display-small) var(--font); letter-spacing: -.02em; overflow-wrap: anywhere; }
 .display--low { color: var(--md-sys-color-tertiary); display: flex; align-items: center; gap: 8px; }
 .display--low .icon { width: 28px; height: 28px; flex-basis: 28px; }
 .app-bar {
@@ -89,7 +89,7 @@ body:has(#snackbar:not([hidden])) .page--form { padding-bottom: calc(80px + var(
 .chart { display: block; width: 100%; height: auto; }
 .chart-bar { fill: var(--md-sys-color-primary); }
 .chart-axis { stroke: var(--md-sys-color-outline-variant); stroke-width: 1; }
-.chart-value, .chart-label { fill: var(--md-sys-color-on-surface-variant); font: 500 9px Roboto, system-ui, sans-serif; text-anchor: middle; }
+.chart-value, .chart-label { fill: var(--md-sys-color-on-surface-variant); font: 500 9px var(--font); text-anchor: middle; }
 .choice-field { border: 0; padding: 0; margin: 0; }
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-sys-shape-corner-full); overflow: hidden; }
 .segmented label { position: relative; display: flex; }
@@ -252,3 +252,5 @@ dialog { border-radius: 20px; background: #FFFFFF; }
 .short-note .icon { width: 15px; height: 15px; flex-basis: 15px; }
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 input, textarea, select, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+button, input, select, textarea { font-family: inherit; }
